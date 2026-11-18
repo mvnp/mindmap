@@ -124,6 +124,9 @@ export default function MindMap() {
   const [marq, setMarq] = useState(null);
   const [selEdges, setSelEdges] = useState([]);   // linhas selecionadas (ids dos filhos)
   const selEdgesRef = useRef([]); selEdgesRef.current = selEdges;
+  const [panel, setPanel] = useState(false);       // painel de funcionalidades (direita), fechado por padrão
+  const [features, setFeatures] = useState([]);   // checklist de funcionalidades do Miro
+  const [level, setLevel] = useState('all');        // filtro "Nível de importância"
   const [ctx, setCtx] = useState(null);           // menu de clique direito {x,y}
   const toolRef = useRef('pan'); toolRef.current = tool;
   const mselRef = useRef([]); mselRef.current = msel;
@@ -301,6 +304,7 @@ export default function MindMap() {
   useEffect(() => {
     const el = stage.current; if (!el) return;
     const onWheel = e => {
+      if (e.target.closest?.('.side, .rpanel')) return;   // rolagem dos painéis não dá zoom no mapa
       e.preventDefault();
       const v = viewRef.current, r = el.getBoundingClientRect();
       const s = Math.min(3, Math.max(0.15, v.s * Math.exp(-e.deltaY * 0.0015)));
@@ -664,6 +668,17 @@ export default function MindMap() {
     return () => { window.removeEventListener('pointerdown', close, true); window.removeEventListener('wheel', close, true); window.removeEventListener('keydown', onKey); window.removeEventListener('blur', close); };
   }, [ctx]);
 
+  /* ----- funcionalidades (painel da direita) ----- */
+  useEffect(() => { fetch('/api/features').then(r => r.json()).then(setFeatures).catch(() => {}); }, []);
+  const toggleFeature = async f => {
+    const checked = !f.checked;
+    setFeatures(list => list.map(x => (x.id === f.id ? { ...x, checked } : x)));
+    try {
+      const r = await fetch(`/api/features/${f.id}`, { method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ checked }) });
+      if (!r.ok) throw new Error();
+    } catch { setFeatures(list => list.map(x => (x.id === f.id ? { ...x, checked: !checked } : x))); }
+  };
+
   /* ----- exportar / importar ----- */
   const openExport = async () => {
     sync(); flush(); await queue.current;
@@ -724,7 +739,7 @@ export default function MindMap() {
   return (
     <div className={`app${full ? ' full' : ''}${guides ? ' g' : ''}`} onContextMenu={onContextMenu}>
 
-      <main className={`stage${tool === 'select' ? ' tool-select' : ''}`} ref={stage} onPointerDown={onStageDown} onPointerMove={onGuideMove} onPointerLeave={onGuideLeave}
+      <main className={`stage${tool === 'select' ? ' tool-select' : ''}${panel ? ' panel-open' : ''}`} ref={stage} onPointerDown={onStageDown} onPointerMove={onGuideMove} onPointerLeave={onGuideLeave}
         style={{ backgroundPosition: `${view.x}px ${view.y}px`, backgroundSize: `${24 * view.s}px ${24 * view.s}px` }}>
         <aside className="side ui">
           <div className="logo">mind<b>map</b></div>
@@ -851,6 +866,27 @@ export default function MindMap() {
             <div className="guide-h" ref={gH} /><div className="guide-v" ref={gV} /><div className="guide-lbl" ref={gL} />
           </div>
         )}
+        <aside className="rpanel ui" aria-hidden={!panel}>
+          <div className="rpanel-h">Funcionalidades do Miro <small>{features.filter(f => f.checked).length}/{features.length} prontas</small></div>
+          <div className="rpanel-f">
+            <label htmlFor="lvl">Nível de importância</label>
+            <select id="lvl" value={level} onChange={e => setLevel(e.target.value)}>
+              <option value="all">Todos os níveis</option>
+              {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map(n => <option key={n} value={n}>Nível {n}{n === 10 ? ' (essencial)' : n === 1 ? ' (opcional)' : ''}</option>)}
+            </select>
+          </div>
+          <div className="rpanel-b">
+            {features.filter(f => level === 'all' || f.importancia === Number(level)).map(f => (
+              <label key={f.id} className={`feat${f.checked ? ' done' : ''}`}>
+                <input type="checkbox" checked={f.checked} onChange={() => toggleFeature(f)} />
+                <span className="feat-t">{f.titulo}<em title="Nível de importância">{f.importancia}</em></span>
+                <span className="feat-d">{f.descricao}</span>
+              </label>
+            ))}
+            {!features.length && <p className="rpanel-empty">Carregando…</p>}
+          </div>
+        </aside>
+        <button className="rtab ui" title={panel ? 'Fechar painel' : 'Abrir painel de funcionalidades'} onClick={() => setPanel(o => !o)}>{panel ? '›' : '‹'}</button>
         <div className="topbar ui">
           <span className="title">{curName || '—'}</span>
           <span className="seg">
