@@ -2,7 +2,21 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 const PALETTE = ['#ff7b7b', '#ffb454', '#e8c53a', '#3fbf8f', '#5b8def', '#a77bf3', '#555555'];
+const COLORS = [...PALETTE, '#ffffff', '#222222'];
 const GX = 70, GAP = 14;
+
+// linha de escolha de cor: paleta + cor livre + voltar ao padrão
+function ColorRow({ label, value, onPick, onReset }) {
+  return (
+    <div className="crow">
+      <span className="clbl">{label}</span>
+      {COLORS.map(c => <button key={c} className={`dot${value === c ? ' cur' : ''}`} style={{ background: c }} onClick={() => onPick(c)} />)}
+      <input type="color" title="Cor personalizada" defaultValue={/^#[0-9a-f]{6}$/i.test(value || '') ? value : '#888888'}
+        ref={el => { if (el) { el._cb = onPick; if (!el._on) { el._on = 1; el.addEventListener('change', ev => el._cb(ev.target.value)); } } }} />
+      <button className="rst" title="Voltar ao padrão" onClick={onReset}>↺</button>
+    </div>
+  );
+}
 const uid = () => Math.random().toString(36).slice(2, 10);
 
 /* ---------- helpers puros ---------- */
@@ -65,6 +79,30 @@ function layoutAll(nodes, sizes) {
   return nodes.map(n => (pos.has(n.id) ? { ...n, ...pos.get(n.id) } : n));
 }
 
+function edgeGeom(nodes, sizes, vis) {
+  const out = [];
+  for (const n of nodes) {
+    if (!n.parent || !vis.has(n.id) || n.x == null) continue;
+    const p = nodes.find(m => m.id === n.parent), a = sizes[n.parent], b = sizes[n.id];
+    if (!p || !a || !b || p.x == null) continue;
+    const right = n.x + b.w / 2 >= p.x + a.w / 2;
+    const x1 = right ? p.x + a.w : p.x, y1 = p.y + a.h / 2;
+    const x2 = right ? n.x : n.x + b.w, y2 = n.y + b.h / 2, mx = (x1 + x2) / 2;
+    out.push({ id: n.id, d: `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`, c: n.lc || effColor(nodes, n), x1, y1, x2, y2, mx, my: (y1 + y2) / 2 });
+  }
+  return out;
+}
+// a curva toca o retângulo? (amostragem da bézier)
+function edgeHitsRect(e, rx0, ry0, rx1, ry1) {
+  for (let i = 0; i <= 24; i++) {
+    const t = i / 24, u = 1 - t;
+    const x = u * u * u * e.x1 + 3 * u * u * t * e.mx + 3 * u * t * t * e.mx + t * t * t * e.x2;
+    const y = u * u * u * e.y1 + 3 * u * u * t * e.y1 + 3 * u * t * t * e.y2 + t * t * t * e.y2;
+    if (x >= rx0 && x <= rx1 && y >= ry0 && y <= ry1) return true;
+  }
+  return false;
+}
+
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
 /* ---------- componente ---------- */
@@ -84,6 +122,8 @@ export default function MindMap() {
   const [tool, setTool] = useState('pan');      // 'pan' = mover a tela · 'select' = seleção em área
   const [msel, setMsel] = useState([]);           // seleção múltipla (2+ blocos)
   const [marq, setMarq] = useState(null);
+  const [selEdges, setSelEdges] = useState([]);   // linhas selecionadas (ids dos filhos)
+  const selEdgesRef = useRef([]); selEdgesRef.current = selEdges;
   const [ctx, setCtx] = useState(null);           // menu de clique direito {x,y}
   const toolRef = useRef('pan'); toolRef.current = tool;
   const mselRef = useRef([]); mselRef.current = msel;
@@ -112,7 +152,7 @@ export default function MindMap() {
   const syncedRef = useRef([]);
   const queue = useRef(Promise.resolve());
   const inflight = useRef(0);
-  const FIELDS = ['parent', 'text', 'x', 'y', 'color', 'size', 'bold', 'collapsed', 'w'];
+  const FIELDS = ['parent', 'text', 'x', 'y', 'color', 'size', 'bold', 'collapsed', 'w', 'bg', 'fg', 'lc'];
 
   const enqueue = useCallback((method, url, body) => {
     inflight.current++; setStatus('Salvando…');
@@ -282,7 +322,7 @@ export default function MindMap() {
   /* ----- pan ----- */
   const onStageDown = e => {
     if (e.button !== 0 || e.target.closest('.node, .toolbar, .ui')) return;
-    setCtx(null);
+    setCtx(null); setSelEdges([]);
     if (toolRef.current === 'select' || e.shiftKey) return startMarquee(e);
     setSel(null); setMsel([]); setEditing(null); setPalOpen(false);
     const sx = e.clientX, sy = e.clientY, v0 = viewRef.current;
@@ -303,7 +343,8 @@ export default function MindMap() {
     const r = stage.current.getBoundingClientRect();
     const base = e.shiftKey ? (mselRef.current.length ? mselRef.current : (selRef.current ? [selRef.current] : [])) : [];
     setEditing(null); setPalOpen(false);
-    if (!e.shiftKey) { setSel(null); setMsel([]); }
+    const baseE = e.shiftKey ? selEdgesRef.current : [];
+    if (!e.shiftKey) { setSel(null); setMsel([]); setSelEdges([]); }
     const x0 = e.clientX - r.left, y0 = e.clientY - r.top;
     const move = ev => {
       const x1 = ev.clientX - r.left, y1 = ev.clientY - r.top;
@@ -316,6 +357,8 @@ export default function MindMap() {
         if (vis.has(m.id) && z && m.x != null && m.x < wx1 && m.x + z.w > wx0 && m.y < wy1 && m.y + z.h > wy0) hit.push(m.id);
       }
       applySel([...new Set([...base, ...hit])]);
+      const eh = edgeGeom(nodesRef.current, sizesRef.current, vis).filter(g => edgeHitsRect(g, wx0, wy0, wx1, wy1)).map(g => g.id);
+      setSelEdges([...new Set([...baseE, ...eh])]);
     };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); setMarq(null); };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
@@ -333,7 +376,7 @@ export default function MindMap() {
       return;
     }
     const group = mselRef.current.length > 1 && mselRef.current.includes(n.id);
-    if (!group) { setMsel([]); setSel(n.id); }
+    if (!group) { setMsel([]); setSel(n.id); setSelEdges([]); }
     // grupo: move todos os blocos selecionados (cada um com o seu ramo) de uma vez
     const ids = new Set();
     for (const gid of (group ? mselRef.current : [n.id])) descendants(nodesRef.current, gid).forEach(i => ids.add(i));
@@ -397,7 +440,7 @@ export default function MindMap() {
   };
 
   /* ----- ações ----- */
-  const newNode = (parent, extra) => ({ id: uid(), parent, text: 'Novo tópico', x: 0, y: 0, color: null, size: null, bold: false, collapsed: false, w: null, ...extra });
+  const newNode = (parent, extra) => ({ id: uid(), parent, text: 'Novo tópico', x: 0, y: 0, color: null, size: null, bold: false, collapsed: false, w: null, bg: null, fg: null, lc: null, ...extra });
 
   // base inferior (em coordenadas do mundo) do ramo visível de um nó — para não sobrepor
   const branchBottom = (ns, id) => {
@@ -483,12 +526,20 @@ export default function MindMap() {
   };
 
   /* ----- teclado ----- */
+  // clique numa linha seleciona só ela; Shift+clique soma/remove da seleção de linhas
+  const selectEdge = (id, additive) => {
+    setEditing(null); setPalOpen(false); setCtx(null);
+    if (additive) { setSelEdges(cur => (cur.includes(id) ? cur.filter(i => i !== id) : [...cur, id])); return; }
+    setSel(null); setMsel([]); setSelEdges([id]);
+  };
+  const patchMany = (ids, p) => { const set = new Set(ids); mutate(ns => ns.map(n => (set.has(n.id) ? { ...n, ...p } : n))); };
   const toggleGuides = () => setGuides(g => { try { localStorage.setItem('mm:guides', g ? '0' : '1'); } catch {} return !g; });
   actions.current = { selectAll: applySel, removeMany, toggleGuides, commitEdit, addChild, addSibling, remove, doUndo, doRedo, toggleCollapse };
   useEffect(() => {
     const onKey = e => {
       if (e.target.closest?.('input, textarea, [contenteditable="true"]')) return;
       const a = actions.current, id = selRef.current;
+      if (e.key === 'Escape') setSelEdges([]);
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) a.doRedo(); else a.doUndo(); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); a.doRedo(); return; }
       if (e.key.toLowerCase() === 'g' && !e.ctrlKey && !e.metaKey) { a.toggleGuides(); return; }
@@ -496,7 +547,7 @@ export default function MindMap() {
       if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey) { setTool('pan'); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
         e.preventDefault(); const vis = visibleSet(nodesRef.current);
-        a.selectAll([...vis]); return;
+        a.selectAll([...vis]); setSelEdges(edgeGeom(nodesRef.current, sizesRef.current, vis).map(g => g.id)); return;
       }
       if (mselRef.current.length > 1) {
         if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); a.removeMany(); }
@@ -663,16 +714,8 @@ export default function MindMap() {
   const vis = visibleSet(nodes);
   const rootId = nodes.find(n => !n.parent)?.id;
   const sn = nodes.find(n => n.id === sel && vis.has(n.id));
-  const edges = [];
-  for (const n of nodes) {
-    if (!n.parent || !vis.has(n.id) || n.x == null) continue;
-    const p = nodes.find(m => m.id === n.parent), a = sizes[n.parent], b = sizes[n.id];
-    if (!p || !a || !b || p.x == null) continue;
-    const right = n.x + b.w / 2 >= p.x + a.w / 2;
-    const x1 = right ? p.x + a.w : p.x, y1 = p.y + a.h / 2;
-    const x2 = right ? n.x : n.x + b.w, y2 = n.y + b.h / 2, mx = (x1 + x2) / 2;
-    edges.push({ id: n.id, d: `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`, c: effColor(nodes, n) });
-  }
+  const edges = edgeGeom(nodes, sizes, vis);
+  const ses = edges.filter(e => selEdges.includes(e.id));
   const defSize = n => n.size || (n.id === rootId ? 22 : 16);
   const tb = sn && sizes[sn.id] && sn.x != null && editing !== sn.id
     ? { left: view.x + (sn.x + sizes[sn.id].w / 2) * view.s, top: view.y + sn.y * view.s - 54 } : null;
@@ -702,7 +745,8 @@ export default function MindMap() {
             Ctrl+Z / Ctrl+Y — desfazer/refazer<br />
           G — guias do mouse<br />
           S — selecionar vários (arraste) · M — mover tela<br />
-          Shift+clique — soma à seleção · Ctrl+A — todos<br />
+          Shift+clique — soma à seleção (blocos e linhas) · Ctrl+A — todos<br />
+          Selecionar em área também pega as linhas tocadas<br />
           F12 — tela cheia (Esc sai)<br />
             Arraste um nó sobre outro para mover o ramo<br />
           Nó selecionado: arraste a alça direita para redimensionar
@@ -710,7 +754,13 @@ export default function MindMap() {
         </aside>
         <div className="world" style={{ transform: `translate(${view.x}px,${view.y}px) scale(${view.s})` }}>
           <svg className="edges"><g>
-            {edges.map(e => <path key={e.id} d={e.d} stroke={e.c} />)}
+            {edges.map(e => (
+              <g key={e.id}>
+                {selEdges.includes(e.id) && <path d={e.d} stroke={e.c} className="edge-halo" />}
+                <path d={e.d} stroke={e.c} />
+                <path d={e.d} className="edge-hit" onPointerDown={ev => { if (ev.button !== 0) return; ev.stopPropagation(); selectEdge(e.id, ev.shiftKey); }} />
+              </g>
+            ))}
           </g></svg>
           {nodes.filter(n => vis.has(n.id)).map(n => {
             const isRoot = n.id === rootId, color = effColor(nodes, n), nk = kidsOf(nodes, n.id).length;
@@ -718,7 +768,7 @@ export default function MindMap() {
             return (
               <div key={n.id} data-id={n.id} ref={el => { if (el) nodeEls.current[n.id] = el; else delete nodeEls.current[n.id]; }}
                 className={`node${n.w ? ' fw' : ''}${isRoot ? ' root' : ''}${sel === n.id || msel.includes(n.id) ? ' sel' : ''}${dropT === n.id ? ' drop' : ''}`}
-                style={{ left: n.x ?? 0, top: n.y ?? 0, visibility: n.x == null ? 'hidden' : 'visible', fontSize: defSize(n), fontWeight: n.bold || isRoot ? 700 : 400, ...(n.w ? { width: n.w } : {}), ...(isRoot ? { background: color } : {}) }}
+                style={{ left: n.x ?? 0, top: n.y ?? 0, visibility: n.x == null ? 'hidden' : 'visible', fontSize: defSize(n), fontWeight: n.bold || isRoot ? 700 : 400, ...(n.w ? { width: n.w } : {}), ...(isRoot || n.bg ? { background: n.bg || color } : {}), ...(n.fg ? { color: n.fg } : {}) }}
                 onPointerDown={e => onNodeDown(e, n)} onDoubleClick={e => { e.stopPropagation(); setSel(n.id); setEditing(n.id); }}>
                 <span key={isEd ? 'e' : 'v'} className="txt" ref={isEd ? editRef : null}
                   contentEditable={isEd} suppressContentEditableWarning spellCheck={false}
@@ -740,9 +790,42 @@ export default function MindMap() {
         </div>
 
         {marq && <div className="marquee" style={{ left: marq.x, top: marq.y, width: marq.w, height: marq.h }} />}
-        {tb && !msel.length && (
+        {msel.length > 1 && (() => {
+          const ms = msel.map(id => nodes.find(n => n.id === id)).filter(n => n && vis.has(n.id) && sizes[n.id] && n.x != null);
+          if (ms.length < 2) return null;
+          const ids = ms.map(n => n.id);
+          // linhas afetadas: a que liga cada bloco ao pai + as linhas selecionadas
+          const lineIds = [...new Set([...ids.filter(id => id !== rootId), ...selEdges])];
+          const common = (list, f) => { const v = list.map(f); return v.every(x => x === v[0]) ? v[0] : null; };
+          const bgV = common(ms, n => n.bg || (n.id === rootId ? effColor(nodes, n) : null));
+          const fgV = common(ms, n => n.fg);
+          const lnV = common(lineIds.map(id => nodes.find(n => n.id === id)), n => n && (n.lc || effColor(nodes, n)));
+          const cx = ms.reduce((t, n) => t + n.x + sizes[n.id].w / 2, 0) / ms.length, top = Math.min(...ms.map(n => n.y));
+          return (
+            <div className="toolbar group-tb" style={{ left: view.x + cx * view.s, top: Math.max(8, view.y + top * view.s - 128) }} onPointerDown={e => e.stopPropagation()}>
+              <div className="gtitle">{ms.length} blocos selecionados</div>
+              <ColorRow key={'b' + ids.join()} label="Bloco" value={bgV} onPick={c => patchMany(ids, { bg: c })} onReset={() => patchMany(ids, { bg: null })} />
+              <ColorRow key={'t' + ids.join()} label="Texto" value={fgV} onPick={c => patchMany(ids, { fg: c })} onReset={() => patchMany(ids, { fg: null })} />
+              {lineIds.length > 0 && <ColorRow key={'l' + lineIds.join()} label="Linha" value={lnV} onPick={c => patchMany(lineIds, { lc: c })} onReset={() => patchMany(lineIds, { lc: null })} />}
+            </div>
+          );
+        })()}
+        {ses.length > 0 && msel.length < 2 && (() => {
+          const ids = ses.map(e => e.id);
+          const lcs = ids.map(id => nodes.find(n => n.id === id)?.lc || null);
+          const same = lcs.every(c => c === lcs[0]);
+          const shown = same ? (lcs[0] || ses[0].c) : null;
+          const cx = ses.reduce((t, e) => t + e.mx, 0) / ses.length, top = Math.min(...ses.map(e => e.my));
+          return (
+            <div className="toolbar edge-tb" style={{ left: view.x + cx * view.s, top: view.y + top * view.s - 52 }} onPointerDown={e => e.stopPropagation()}>
+              <ColorRow key={ids.join()} label={ses.length > 1 ? `${ses.length} linhas` : 'Linha'} value={shown}
+                onPick={c => patchMany(ids, { lc: c })} onReset={() => patchMany(ids, { lc: null })} />
+            </div>
+          );
+        })()}
+        {tb && !msel.length && !selEdges.length && (
           <div className="toolbar" style={{ left: tb.left, top: tb.top }} onPointerDown={e => e.stopPropagation()}>
-            <button title="Cor" className="dot" style={{ background: effColor(nodes, sn) }} onClick={() => setPalOpen(o => !o)} />
+            <button title="Cores: bloco, texto e linha" onClick={() => setPalOpen(o => !o)}>🎨</button>
             <span className="sep" />
             <button title="Menor" onClick={() => patch(sn.id, { size: Math.max(10, defSize(sn) - 2) })}>A−</button>
             <span className="val">{defSize(sn)}</span>
@@ -755,7 +838,9 @@ export default function MindMap() {
             {sn.id !== rootId && <button title="Excluir (Del)" onClick={() => remove(sn.id)}>🗑</button>}
             {palOpen && (
               <div className="pal">
-                {PALETTE.map(c => <button key={c} className="dot" style={{ background: c }} onClick={() => { patch(sn.id, { color: c }); setPalOpen(false); }} />)}
+                <ColorRow label="Bloco" value={sn.bg || (sn.id === rootId ? effColor(nodes, sn) : null)} onPick={c => patch(sn.id, { bg: c })} onReset={() => patch(sn.id, { bg: null })} />
+                <ColorRow label="Texto" value={sn.fg} onPick={c => patch(sn.id, { fg: c })} onReset={() => patch(sn.id, { fg: null })} />
+                {sn.id !== rootId && <ColorRow label="Linha" value={sn.lc || effColor(nodes, sn)} onPick={c => patch(sn.id, { lc: c })} onReset={() => patch(sn.id, { lc: null })} />}
               </div>
             )}
           </div>

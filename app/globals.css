@@ -55,7 +55,6 @@ button { font: inherit; cursor: pointer; border: 0; background: none; color: inh
 .undo button:hover, .zoom button:hover { background: #f0f0f0; border-radius: 8px; }
 .zoom span { min-width: 48px; text-align: center; font-size: 12px; }
 
-.app.full .side, .app.full .topbar, .app.full .undo { display: none; }
 
 .modal-bg { position: fixed; inset: 0; background: #0006; display: grid; place-items: center; z-index: 50; }
 .modal { width: min(640px, 92vw); background: #fff; border-radius: 14px; padding: 18px; box-shadow: 0 8px 40px #0005; display: flex; flex-direction: column; gap: 10px; }
@@ -99,3 +98,18 @@ button { font: inherit; cursor: pointer; border: 0; background: none; color: inh
 .ctx button:hover:not(:disabled) { background: #e4ecff; }
 .ctx button:disabled { opacity: .4; cursor: not-allowed; }
 .ctx small { color: #888; font-size: 11px; }
+
+/* linhas selecionáveis */
+.edges path.edge-hit { stroke: transparent; stroke-width: 16; pointer-events: stroke; cursor: pointer; }
+.edges path.edge-halo { stroke-width: 9; opacity: .28; }
+.crow { display: flex; align-items: center; gap: 2px; padding: 2px 0; }
+.clbl { width: 46px; font-size: 12px; color: #777; }
+.crow .dot { width: 18px; height: 18px; min-width: 18px; margin: 0 2px; }
+.crow .dot.cur { box-shadow: 0 0 0 2px #4f7cf7; }
+.crow input[type=color] { width: 24px; height: 22px; padding: 0; border: 0; background: none; cursor: pointer; margin-left: 4px; }
+.crow .rst { min-width: 24px; height: 24px; font-size: 14px; }
+.pal { flex-direction: column; min-width: 290px; }
+.edge-tb { padding: 4px 10px; }
+
+.group-tb { flex-direction: column; align-items: stretch; padding: 6px 10px; }
+.gtitle { font-size: 12px; color: #2c55c9; padding: 2px 0 4px; }
