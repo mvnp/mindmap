@@ -32,15 +32,20 @@ function descendants(nodes, id) {
   }
   return out;
 }
+// topo da árvore a que o bloco pertence (blocos sem pai são topos: o principal e os que tiveram a linha desligada)
+function topOf(nodes, id) {
+  let c = nodes.find(n => n.id === id), hops = 0;
+  while (c?.parent && hops++ < nodes.length) { const p = c.parent; c = nodes.find(n => n.id === p); }
+  return c;
+}
 function visibleSet(nodes) {
-  const root = nodes.find(n => !n.parent);
   const vis = new Set();
   const walk = id => {
     vis.add(id);
     const n = nodes.find(m => m.id === id);
     if (n && !n.collapsed) kidsOf(nodes, id).forEach(c => walk(c.id));
   };
-  if (root) walk(root.id);
+  nodes.filter(n => !n.parent).forEach(r => walk(r.id));
   return vis;
 }
 function effColor(nodes, n) {
@@ -49,8 +54,8 @@ function effColor(nodes, n) {
   return '#ff7b7b';
 }
 function layoutAll(nodes, sizes) {
-  const root = nodes.find(n => !n.parent);
-  if (!root) return nodes;
+  const tops = nodes.filter(n => !n.parent);
+  if (!tops.length) return nodes;
   const W = id => sizes[id]?.w || 100, H = id => sizes[id]?.h || 30;
   const memo = {};
   const sub = id => {
@@ -72,12 +77,14 @@ function layoutAll(nodes, sizes) {
       y += sh + GAP;
     }
   };
-  const rx = root.x ?? 0, ry = root.y ?? 0, cy = ry + H(root.id) / 2;
-  pos.set(root.id, { x: rx, y: ry });
-  const top = root.collapsed ? [] : kidsOf(nodes, root.id);
-  const cut = Math.ceil(top.length / 2);
-  place(top.slice(0, cut), rx + W(root.id), cy, 1);
-  place(top.slice(cut), rx, cy, -1);
+  for (const root of tops) {   // cada árvore independente é organizada em torno do seu próprio topo
+    const rx = root.x ?? 0, ry = root.y ?? 0, cy = ry + H(root.id) / 2;
+    pos.set(root.id, { x: rx, y: ry });
+    const top = root.collapsed ? [] : kidsOf(nodes, root.id);
+    const cut = Math.ceil(top.length / 2);
+    place(top.slice(0, cut), rx + W(root.id), cy, 1);
+    place(top.slice(cut), rx, cy, -1);
+  }
   return nodes.map(n => (pos.has(n.id) ? { ...n, ...pos.get(n.id) } : n));
 }
 
@@ -135,6 +142,7 @@ export default function MindMap({ user, current, initialData }) {
   const [msel, setMsel] = useState([]);           // seleção múltipla (2+ blocos)
   const [marq, setMarq] = useState(null);
   const [selEdges, setSelEdges] = useState([]);   // linhas selecionadas (ids dos filhos)
+  const [link, setLink] = useState(null);          // linha provisória enquanto se liga/religa: { x1, y1, x2, y2 }
   const selEdgesRef = useRef([]); selEdgesRef.current = selEdges;
   const [panel, setPanel] = useState(false);       // painel de funcionalidades (direita), fechado por padrão
   const [features, setFeatures] = useState([]);   // checklist de funcionalidades do Miro
@@ -412,7 +420,7 @@ export default function MindMap({ user, current, initialData }) {
       const s = viewRef.current.s;
       const next = nodesRef.current.map(m => (orig.has(m.id) ? { ...m, x: orig.get(m.id).x + dx / s, y: orig.get(m.id).y + dy / s } : m));
       nodesRef.current = next; setNodes(next);
-      if (n.parent && !group) {
+      if (!group) {
         const r = stage.current.getBoundingClientRect(), v = viewRef.current;
         const wx = (ev.clientX - r.left - v.x) / v.s, wy = (ev.clientY - r.top - v.y) / v.s;
         const vis = visibleSet(next);
@@ -430,7 +438,7 @@ export default function MindMap({ user, current, initialData }) {
       setDropT(null);
       if (!moved) return;
       if (!group && target && target !== n.parent) {
-        const root = nodesRef.current.find(m => !m.parent);
+        const root = topOf(nodesRef.current, target);
         const next = nodesRef.current.map(m => {
           if (m.id === n.id) return { ...m, parent: target, color: target === root.id ? (m.color || PALETTE[kidsOf(nodesRef.current, root.id).length % PALETTE.length]) : null };
           if (m.id === target) return { ...m, collapsed: false };
@@ -480,7 +488,7 @@ export default function MindMap({ user, current, initialData }) {
   // só o novo nó é posicionado; nenhum outro nó se move
   const addChild = pId => {
     const ns = nodesRef.current, parent = ns.find(n => n.id === pId); if (!parent) return;
-    const root = ns.find(n => !n.parent);
+    const root = topOf(ns, pId);
     const sz = sizesRef.current[pId] || { w: 100, h: 30 };
     const sibs = kidsOf(ns, pId);
     let side;
@@ -505,7 +513,7 @@ export default function MindMap({ user, current, initialData }) {
   const addSibling = id => {
     const ns = nodesRef.current, n = ns.find(m => m.id === id);
     if (!n?.parent) return addChild(id);
-    const root = ns.find(m => !m.parent);
+    const root = topOf(ns, id);
     const node = newNode(n.parent, {
       x: n.x, y: branchBottom(ns, id) + GAP,
       color: n.parent === root.id ? PALETTE[kidsOf(ns, root.id).length % PALETTE.length] : null,
@@ -519,16 +527,75 @@ export default function MindMap({ user, current, initialData }) {
     setSel(node.id); setEditing(node.id);
   };
   const remove = id => {
-    const n = nodesRef.current.find(m => m.id === id); if (!n?.parent) return;
+    const n = nodesRef.current.find(m => m.id === id); if (!n) return;
+    if (!n.parent && nodesRef.current.filter(m => !m.parent).length < 2) return;   // o único topo não se exclui
     const ids = descendants(nodesRef.current, id);
     mutate(list => list.filter(m => !ids.has(m.id)));
-    setSel(n.parent); setEditing(null);
+    setSel(n.parent || null); setEditing(null);
   };
   const removeMany = () => {
     const ids = new Set();
-    for (const id of mselRef.current) { const n = nodesRef.current.find(m => m.id === id); if (n?.parent) descendants(nodesRef.current, id).forEach(i => ids.add(i)); }
-    if (ids.size) mutate(list => list.filter(m => !ids.has(m.id)));
+    const nTops = nodesRef.current.filter(m => !m.parent).length;
+    for (const id of mselRef.current) { const n = nodesRef.current.find(m => m.id === id); if (n && (n.parent || nTops > 1)) descendants(nodesRef.current, id).forEach(i => ids.add(i)); }
+    if (ids.size && ids.size < nodesRef.current.length) mutate(list => list.filter(m => !ids.has(m.id)));
     setMsel([]); setSel(null);
+  };
+  /* ----- ligar / desligar linhas: a linha de um bloco é a que o liga ao pai ----- */
+  // changes: [{ id, parent, lc? }] · expand: blocos a expandir. A cor herdada é congelada para ninguém mudar de aparência.
+  const relink = (changes, expand = []) => mutate(ns => ns.map(n => {
+    const ch = changes.find(c => c.id === n.id);
+    if (!ch) return expand.includes(n.id) ? { ...n, collapsed: false } : n;
+    return { ...n, parent: ch.parent, color: n.color || effColor(ns, n), ...(ch.lc !== undefined ? { lc: ch.lc } : {}) };
+  }));
+  const detachEdges = ids => {
+    const ch = ids.filter(id => nodesRef.current.find(m => m.id === id)?.parent).map(id => ({ id, parent: null }));
+    if (ch.length) relink(ch);
+    setSelEdges([]);
+  };
+  // arrasto de uma ponta de linha (ou do botão "ligar"): a linha provisória segue o mouse e, soltando sobre um bloco válido, liga
+  const dragLink = (e, o) => {
+    if (e.button !== 0 || readOnly) return;
+    e.stopPropagation(); e.preventDefault();
+    const r = stage.current.getBoundingClientRect();
+    let target = null;
+    const move = ev => {
+      const v = viewRef.current, x = (ev.clientX - r.left - v.x) / v.s, y = (ev.clientY - r.top - v.y) / v.s;
+      const vs = visibleSet(nodesRef.current); target = null;
+      for (const m of nodesRef.current) {
+        const z = sizesRef.current[m.id];
+        if (!vs.has(m.id) || !z || m.x == null) continue;
+        if (x >= m.x && x <= m.x + z.w && y >= m.y && y <= m.y + z.h && o.valid(m.id)) target = m.id;
+      }
+      setDropT(target);
+      setLink({ x1: o.fixed.x, y1: o.fixed.y, x2: x, y2: y });
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      setLink(null); setDropT(null);
+      if (target) o.apply(target);
+    };
+    move(e);
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+  // ponta da linha selecionada: 'from' = lado do pai · 'to' = lado do filho
+  const onEdgeEnd = (e, g, end) => {
+    const ns = nodesRef.current, c = ns.find(m => m.id === g.id); if (!c) return;
+    const par = c.parent;
+    if (end === 'from') {
+      const sub = descendants(ns, c.id);
+      dragLink(e, { fixed: { x: g.x2, y: g.y2 }, valid: id => id !== par && !sub.has(id),
+        apply: t => relink([{ id: c.id, parent: t }], [t]) });
+    } else {
+      dragLink(e, { fixed: { x: g.x1, y: g.y1 }, valid: id => id !== par && id !== c.id && !descendants(nodesRef.current, id).has(par),
+        apply: t => { relink([{ id: t, parent: par, lc: g.c }, { id: c.id, parent: null }]); setSelEdges([t]); } });
+    }
+  };
+  // botão "ligar" do bloco: arraste até outro bloco, que passa a sair deste
+  const startLinkFrom = (e, b) => {
+    const z = sizesRef.current[b.id]; if (!z) return;
+    dragLink(e, { fixed: { x: b.x + z.w / 2, y: b.y + z.h / 2 },
+      valid: id => id !== b.id && !descendants(nodesRef.current, id).has(b.id) && nodesRef.current.find(m => m.id === id)?.parent !== b.id,
+      apply: t => relink([{ id: t, parent: b.id }], [b.id]) });
   };
   const toggleCollapse = id => patch(id, { collapsed: !nodesRef.current.find(n => n.id === id).collapsed });
   const doUndo = () => {
@@ -557,7 +624,7 @@ export default function MindMap({ user, current, initialData }) {
   };
   const patchMany = (ids, p) => { const set = new Set(ids); mutate(ns => ns.map(n => (set.has(n.id) ? { ...n, ...p } : n))); };
   const toggleGuides = () => setGuides(g => { try { localStorage.setItem('mm:guides', g ? '0' : '1'); } catch {} return !g; });
-  actions.current = { selectAll: applySel, removeMany, toggleGuides, commitEdit, addChild, addSibling, remove, doUndo, doRedo, toggleCollapse };
+  actions.current = { selectAll: applySel, removeMany, toggleGuides, commitEdit, addChild, addSibling, remove, doUndo, doRedo, toggleCollapse, detachEdges };
   useEffect(() => {
     const onKey = e => {
       if (e.target.closest?.('input, textarea, [contenteditable="true"]')) return;
@@ -581,6 +648,7 @@ export default function MindMap({ user, current, initialData }) {
         else if (e.key === 'Escape') setMsel([]);
         return;
       }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selEdgesRef.current.length && !id) { e.preventDefault(); a.detachEdges(selEdgesRef.current); return; }
       if (!id) return;
       if (e.key === 'Tab') { e.preventDefault(); a.addChild(id); }
       else if (e.key === 'Enter') { e.preventDefault(); a.addSibling(id); }
@@ -775,6 +843,7 @@ export default function MindMap({ user, current, initialData }) {
   /* ----- render ----- */
   const vis = visibleSet(nodes);
   const rootId = nodes.find(n => !n.parent)?.id;
+  const topCount = nodes.filter(n => !n.parent).length;
   const sn = nodes.find(n => n.id === sel && vis.has(n.id));
   const edges = edgeGeom(nodes, sizes, vis);
   const ses = edges.filter(e => selEdges.includes(e.id));
@@ -823,6 +892,8 @@ export default function MindMap({ user, current, initialData }) {
           S — selecionar vários (arraste) · M — mover tela<br />
           Shift+clique — soma à seleção (blocos e linhas) · Ctrl+A — todos<br />
           Selecionar em área também pega as linhas tocadas<br />
+          Linha selecionada: Del desliga · arraste as bolinhas para religar<br />
+          Botão 🔗 do bloco: arraste até outro bloco para ligar<br />
           F12 — tela cheia (Esc sai)<br />
             Arraste um nó sobre outro para mover o ramo<br />
           Nó selecionado: arraste a alça direita para redimensionar
@@ -863,6 +934,15 @@ export default function MindMap({ user, current, initialData }) {
               </div>
             );
           })}
+          {/* camada acima dos blocos: pontas da linha selecionada (religar) e linha provisória */}
+          <svg className="edges edges-top"><g>
+            {!readOnly && !link && ses.length === 1 && msel.length < 2 && [['from', ses[0].x1, ses[0].y1], ['to', ses[0].x2, ses[0].y2]].map(([end, cx, cy]) => (
+              <circle key={end} className="ehandle" cx={cx} cy={cy} r={7} onPointerDown={ev => onEdgeEnd(ev, ses[0], end)}>
+                <title>{end === 'from' ? 'Arraste para ligar esta linha a outro bloco de origem' : 'Arraste para ligar esta linha a outro bloco de destino'}</title>
+              </circle>
+            ))}
+            {link && <path className="edge-temp" d={`M${link.x1} ${link.y1} C${(link.x1 + link.x2) / 2} ${link.y1} ${(link.x1 + link.x2) / 2} ${link.y2} ${link.x2} ${link.y2}`} />}
+          </g></svg>
         </div>
 
         {marq && <div className="marquee" style={{ left: marq.x, top: marq.y, width: marq.w, height: marq.h }} />}
@@ -871,7 +951,7 @@ export default function MindMap({ user, current, initialData }) {
           if (ms.length < 2) return null;
           const ids = ms.map(n => n.id);
           // linhas afetadas: a que liga cada bloco ao pai + as linhas selecionadas
-          const lineIds = [...new Set([...ids.filter(id => id !== rootId), ...selEdges])];
+          const lineIds = [...new Set([...ids.filter(id => nodes.find(n => n.id === id)?.parent), ...selEdges])];
           const common = (list, f) => { const v = list.map(f); return v.every(x => x === v[0]) ? v[0] : null; };
           const bgV = common(ms, n => n.bg || (n.id === rootId ? effColor(nodes, n) : null));
           const fgV = common(ms, n => n.fg);
@@ -896,6 +976,8 @@ export default function MindMap({ user, current, initialData }) {
             <div className="toolbar edge-tb" style={{ left: view.x + cx * view.s, top: view.y + top * view.s - 52 }} onPointerDown={e => e.stopPropagation()}>
               <ColorRow key={ids.join()} label={ses.length > 1 ? `${ses.length} linhas` : 'Linha'} value={shown}
                 onPick={c => patchMany(ids, { lc: c })} onReset={() => patchMany(ids, { lc: null })} />
+              <span className="sep" />
+              <button className="cut" title={ses.length > 1 ? 'Desligar as linhas (Del): os blocos ficam independentes' : 'Desligar a linha (Del). Arraste as bolinhas das pontas para ligá-la a outro bloco'} onClick={() => detachEdges(ids)}>✂ Desligar</button>
             </div>
           );
         })()}
@@ -910,13 +992,14 @@ export default function MindMap({ user, current, initialData }) {
             {sn.w && <button title="Largura automática (linha inteira)" onClick={() => patch(sn.id, { w: null })}>↔</button>}
             <span className="sep" />
             <button title="Adicionar filho (Tab)" onClick={() => addChild(sn.id)}>＋</button>
+            <button title="Ligar: arraste daqui até outro bloco; ele passa a sair deste" onPointerDown={e => startLinkFrom(e, sn)}>🔗</button>
             {kidsOf(nodes, sn.id).length > 0 && <button title="Recolher/expandir (Espaço)" onClick={() => toggleCollapse(sn.id)}>{sn.collapsed ? '⊞' : '⊟'}</button>}
-            {sn.id !== rootId && <button title="Excluir (Del)" onClick={() => remove(sn.id)}>🗑</button>}
+            {(sn.parent || topCount > 1) && <button title="Excluir (Del)" onClick={() => remove(sn.id)}>🗑</button>}
             {palOpen && (
               <div className="pal">
                 <ColorRow label="Bloco" value={sn.bg || (sn.id === rootId ? effColor(nodes, sn) : null)} onPick={c => patch(sn.id, { bg: c })} onReset={() => patch(sn.id, { bg: null })} />
                 <ColorRow label="Texto" value={sn.fg} onPick={c => patch(sn.id, { fg: c })} onReset={() => patch(sn.id, { fg: null })} />
-                {sn.id !== rootId && <ColorRow label="Linha" value={sn.lc || effColor(nodes, sn)} onPick={c => patch(sn.id, { lc: c })} onReset={() => patch(sn.id, { lc: null })} />}
+                {sn.parent && <ColorRow label="Linha" value={sn.lc || effColor(nodes, sn)} onPick={c => patch(sn.id, { lc: c })} onReset={() => patch(sn.id, { lc: null })} />}
               </div>
             )}
           </div>

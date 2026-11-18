@@ -299,3 +299,11 @@ button { font: inherit; cursor: pointer; border: 0; background: none; color: inh
 .lp-foot .lp-wrap { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .modal.lp-signup { width: min(460px, 94vw); max-height: 92vh; overflow: auto; }
 @media (max-width: 860px) { .lp-grid3 { grid-template-columns: 1fr; } .lp-hero { padding: 56px 0 40px; } .lp-nav nav a[href^="#"] { display: none; } }
+
+/* ===== ligar / desligar linhas ===== */
+.edges circle.ehandle { pointer-events: all; fill: #fff; stroke: #4f7cf7; stroke-width: 3; cursor: crosshair; }
+.edges circle.ehandle:hover { fill: #4f7cf7; }
+.edges path.edge-temp { stroke: #4f7cf7; stroke-width: 2.5; stroke-dasharray: 7 6; pointer-events: none; }
+.toolbar button.cut { padding: 0 10px; font-size: 13px; white-space: nowrap; }
+.toolbar .sep { width: 1px; height: 18px; background: #e3e3e3; margin: 0 6px; }
+.edges.edges-top { z-index: 6; }
