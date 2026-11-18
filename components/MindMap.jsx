@@ -127,6 +127,7 @@ export default function MindMap() {
   const [panel, setPanel] = useState(false);       // painel de funcionalidades (direita), fechado por padrão
   const [features, setFeatures] = useState([]);   // checklist de funcionalidades do Miro
   const [level, setLevel] = useState('all');        // filtro "Nível de importância"
+  const [anim, setAnim] = useState(false);          // transições só depois do 1º render (sem animar ao restaurar o estado)
   const [ctx, setCtx] = useState(null);           // menu de clique direito {x,y}
   const toolRef = useRef('pan'); toolRef.current = tool;
   const mselRef = useRef([]); mselRef.current = msel;
@@ -242,6 +243,8 @@ export default function MindMap() {
       const list = await refreshProjects();
       let id = list[0]?.id;
       try { setGuides(localStorage.getItem('mm:guides') !== '0'); } catch {}
+      try { setPanel(localStorage.getItem('mm:panel') === '1'); setLevel(localStorage.getItem('mm:level') || 'all'); } catch {}
+      requestAnimationFrame(() => requestAnimationFrame(() => setAnim(true)));
       try { const s = Number(localStorage.getItem('mm:pid')); if (list.some(p => p.id === s)) id = s; } catch {}
       if (id) loadProject(id);
     })();
@@ -670,6 +673,16 @@ export default function MindMap() {
 
   /* ----- funcionalidades (painel da direita) ----- */
   useEffect(() => { fetch('/api/features').then(r => r.json()).then(setFeatures).catch(() => {}); }, []);
+  const [copied, setCopied] = useState(null);
+  const copyFeature = async f => {
+    const text = f.explicacao_ia || '';
+    try { await navigator.clipboard.writeText(text); }
+    catch {  // fallback para contextos sem permissão de clipboard
+      const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+    }
+    setCopied(f.id); setTimeout(() => setCopied(c => (c === f.id ? null : c)), 1500);
+  };
   const toggleFeature = async f => {
     const checked = !f.checked;
     setFeatures(list => list.map(x => (x.id === f.id ? { ...x, checked } : x)));
@@ -739,7 +752,7 @@ export default function MindMap() {
   return (
     <div className={`app${full ? ' full' : ''}${guides ? ' g' : ''}`} onContextMenu={onContextMenu}>
 
-      <main className={`stage${tool === 'select' ? ' tool-select' : ''}${panel ? ' panel-open' : ''}`} ref={stage} onPointerDown={onStageDown} onPointerMove={onGuideMove} onPointerLeave={onGuideLeave}
+      <main className={`stage${tool === 'select' ? ' tool-select' : ''}${panel ? ' panel-open' : ''}${anim ? ' anim' : ''}`} ref={stage} onPointerDown={onStageDown} onPointerMove={onGuideMove} onPointerLeave={onGuideLeave}
         style={{ backgroundPosition: `${view.x}px ${view.y}px`, backgroundSize: `${24 * view.s}px ${24 * view.s}px` }}>
         <aside className="side ui">
           <div className="logo">mind<b>map</b></div>
@@ -870,7 +883,7 @@ export default function MindMap() {
           <div className="rpanel-h">Funcionalidades do Miro <small>{features.filter(f => f.checked).length}/{features.length} prontas</small></div>
           <div className="rpanel-f">
             <label htmlFor="lvl">Nível de importância</label>
-            <select id="lvl" value={level} onChange={e => setLevel(e.target.value)}>
+            <select id="lvl" value={level} onChange={e => { setLevel(e.target.value); try { localStorage.setItem('mm:level', e.target.value); } catch {} }}>
               <option value="all">Todos os níveis</option>
               {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map(n => <option key={n} value={n}>Nível {n}{n === 10 ? ' (essencial)' : n === 1 ? ' (opcional)' : ''}</option>)}
             </select>
@@ -879,14 +892,21 @@ export default function MindMap() {
             {features.filter(f => level === 'all' || f.importancia === Number(level)).map(f => (
               <label key={f.id} className={`feat${f.checked ? ' done' : ''}`}>
                 <input type="checkbox" checked={f.checked} onChange={() => toggleFeature(f)} />
-                <span className="feat-t">{f.titulo}<em title="Nível de importância">{f.importancia}</em></span>
+                <span className="feat-t"><span>{f.titulo}</span>
+                  <span className="feat-r"><em title="Nível de importância">{f.importancia}</em>
+                    <button type="button" className={`copy${copied === f.id ? ' ok' : ''}`} title="Copiar explicação para IA"
+                      onClick={e => { e.preventDefault(); e.stopPropagation(); copyFeature(f); }}>
+                      {copied === f.id
+                        ? <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 7" /></svg>
+                        : <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h9" /></svg>}
+                    </button></span></span>
                 <span className="feat-d">{f.descricao}</span>
               </label>
             ))}
             {!features.length && <p className="rpanel-empty">Carregando…</p>}
           </div>
         </aside>
-        <button className="rtab ui" title={panel ? 'Fechar painel' : 'Abrir painel de funcionalidades'} onClick={() => setPanel(o => !o)}>{panel ? '›' : '‹'}</button>
+        <button className="rtab ui" title={panel ? 'Fechar painel' : 'Abrir painel de funcionalidades'} onClick={() => setPanel(o => { try { localStorage.setItem('mm:panel', o ? '0' : '1'); } catch {} return !o; })}>{panel ? '›' : '‹'}</button>
         <div className="topbar ui">
           <span className="title">{curName || '—'}</span>
           <span className="seg">
