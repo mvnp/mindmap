@@ -152,6 +152,8 @@ export default function MindMap({ user, current, initialData }) {
   const [dbOpen, setDbOpen] = useState(false);       // visualizador do banco (master)
   const [ctx, setCtx] = useState(null);           // menu de clique direito {x,y}
   const toolRef = useRef('pan'); toolRef.current = tool;
+  const prevTool = useRef('pan');             // ferramenta de antes do zoom (volta a ela depois de usar)
+  const pickTool = t => { if (t === 'zoom' && toolRef.current !== 'zoom') prevTool.current = toolRef.current; setTool(t); };
   const mselRef = useRef([]); mselRef.current = msel;
   const selRef = useRef(null); selRef.current = sel;
   const gH = useRef(null), gV = useRef(null), gL = useRef(null);
@@ -349,10 +351,40 @@ export default function MindMap({ user, current, initialData }) {
     viewRef.current = nv; setView(nv); scheduleSave();
   };
 
+  /* ----- ferramenta de zoom (Z): arraste um retângulo e a área ocupa a tela, centralizada · clique = aproxima (Shift = afasta) ----- */
+  const startZoom = e => {
+    const r = stage.current.getBoundingClientRect();
+    const x0 = e.clientX - r.left, y0 = e.clientY - r.top;
+    setEditing(null); setPalOpen(false);
+    let moved = false;
+    const box = ev => { const x1 = ev.clientX - r.left, y1 = ev.clientY - r.top; return { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) }; };
+    const move = ev => { const b = box(ev); if (!moved && Math.hypot(b.w, b.h) < 6) return; moved = true; setMarq({ ...b, zoom: true }); };
+    const up = ev => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      const b = box(ev); setMarq(null);
+      const v = viewRef.current, W = r.width, H = r.height;
+      let s, cx, cy;   // s = nova escala · cx,cy = ponto do mundo que vai para o centro da tela
+      if (moved && b.w > 8 && b.h > 8) {
+        s = Math.min(W / (b.w / v.s), H / (b.h / v.s)) * 0.94;
+        cx = (b.x + b.w / 2 - v.x) / v.s; cy = (b.y + b.h / 2 - v.y) / v.s;
+      } else {
+        s = ev.shiftKey ? v.s / 1.6 : v.s * 1.6;
+        cx = (x0 - v.x) / v.s; cy = (y0 - v.y) / v.s;
+      }
+      s = Math.min(3, Math.max(0.15, s));
+      const nv = { s, x: W / 2 - cx * s, y: H / 2 - cy * s };
+      viewRef.current = nv; setView(nv); scheduleSave();
+      setTool(prevTool.current);
+    };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+
   /* ----- pan ----- */
   const onStageDown = e => {
-    if (e.button !== 0 || e.target.closest('.node, .toolbar, .ui')) return;
+    const zooming = toolRef.current === 'zoom';
+    if (e.button !== 0 || e.target.closest('.toolbar, .ui') || (!zooming && e.target.closest('.node'))) return;
     setCtx(null); setSelEdges([]);
+    if (zooming) return startZoom(e);
     if (toolRef.current === 'select' || e.shiftKey) return startMarquee(e);
     setSel(null); setMsel([]); setEditing(null); setPalOpen(false);
     const sx = e.clientX, sy = e.clientY, v0 = viewRef.current;
@@ -396,6 +428,7 @@ export default function MindMap({ user, current, initialData }) {
 
   /* ----- arrastar nó (move o ramo; soltar sobre outro nó = reparentar) ----- */
   const onNodeDown = (e, n) => {
+    if (toolRef.current === 'zoom') return;   // o palco trata o arrasto de zoom
     if (editing === n.id || e.button !== 0) return;
     e.stopPropagation();
     if (e.target.closest('.badge')) return;
@@ -408,9 +441,15 @@ export default function MindMap({ user, current, initialData }) {
     const group = mselRef.current.length > 1 && mselRef.current.includes(n.id);
     if (!group) { setMsel([]); setSel(n.id); setSelEdges([]); }
     if (readOnly) return;
-    // grupo: move todos os blocos selecionados (cada um com o seu ramo) de uma vez
-    const ids = new Set();
-    for (const gid of (group ? mselRef.current : [n.id])) descendants(nodesRef.current, gid).forEach(i => ids.add(i));
+    // Arrastar move SÓ o(s) bloco(s) arrastado(s): os filhos ficam parados e as linhas se esticam em tempo real.
+    // Alt+arrastar leva o ramo junto (e um bloco recolhido sempre leva o ramo escondido).
+    // ids = blocos que se movem · sub = ramo de cada bloco arrastado (não pode servir de destino do "soltar sobre": criaria ciclo)
+    const ids = new Set(), sub = new Set();
+    for (const gid of (group ? mselRef.current : [n.id])) {
+      const d = descendants(nodesRef.current, gid);
+      d.forEach(i => sub.add(i));
+      if (e.altKey || nodesRef.current.find(m => m.id === gid)?.collapsed) d.forEach(i => ids.add(i)); else ids.add(gid);
+    }
     const orig = new Map(nodesRef.current.filter(m => ids.has(m.id)).map(m => [m.id, { x: m.x, y: m.y }]));
     const sx = e.clientX, sy = e.clientY;
     let moved = false, target = null;
@@ -427,7 +466,7 @@ export default function MindMap({ user, current, initialData }) {
         target = null;
         for (const m of next) {
           const z = sizesRef.current[m.id];
-          if (!vis.has(m.id) || ids.has(m.id) || !z) continue;
+          if (!vis.has(m.id) || sub.has(m.id) || !z) continue;
           if (wx >= m.x && wx <= m.x + z.w && wy >= m.y && wy <= m.y + z.h) target = m.id;
         }
         setDropT(target);
@@ -624,21 +663,22 @@ export default function MindMap({ user, current, initialData }) {
   };
   const patchMany = (ids, p) => { const set = new Set(ids); mutate(ns => ns.map(n => (set.has(n.id) ? { ...n, ...p } : n))); };
   const toggleGuides = () => setGuides(g => { try { localStorage.setItem('mm:guides', g ? '0' : '1'); } catch {} return !g; });
-  actions.current = { selectAll: applySel, removeMany, toggleGuides, commitEdit, addChild, addSibling, remove, doUndo, doRedo, toggleCollapse, detachEdges };
+  actions.current = { pickTool, selectAll: applySel, removeMany, toggleGuides, commitEdit, addChild, addSibling, remove, doUndo, doRedo, toggleCollapse, detachEdges };
   useEffect(() => {
     const onKey = e => {
       if (e.target.closest?.('input, textarea, [contenteditable="true"]')) return;
       const a = actions.current, id = selRef.current;
       if (readOnly) {   // somente leitura: só guias, ferramentas, seleção e Esc
         const k = e.key.toLowerCase();
-        if (!(['g', 's', 'm', 'escape'].includes(k) || ((e.ctrlKey || e.metaKey) && k === 'a'))) return;
+        if (!(['g', 's', 'm', 'z', 'escape'].includes(k) || ((e.ctrlKey || e.metaKey) && k === 'a'))) return;
       }
-      if (e.key === 'Escape') setSelEdges([]);
+      if (e.key === 'Escape') { setSelEdges([]); if (toolRef.current === 'zoom') setTool(prevTool.current); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) a.doRedo(); else a.doUndo(); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); a.doRedo(); return; }
       if (e.key.toLowerCase() === 'g' && !e.ctrlKey && !e.metaKey) { a.toggleGuides(); return; }
       if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey) { setTool('select'); return; }
       if (e.key.toLowerCase() === 'm' && !e.ctrlKey && !e.metaKey) { setTool('pan'); return; }
+      if (e.key.toLowerCase() === 'z' && !e.ctrlKey && !e.metaKey) { pickTool('zoom'); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
         e.preventDefault(); const vis = visibleSet(nodesRef.current);
         a.selectAll([...vis]); setSelEdges(edgeGeom(nodesRef.current, sizesRef.current, vis).map(g => g.id)); return;
@@ -855,7 +895,7 @@ export default function MindMap({ user, current, initialData }) {
   return (
     <div className={`app${full ? ' full' : ''}${guides ? ' g' : ''}`} onContextMenu={onContextMenu}>
 
-      <main className={`stage${tool === 'select' ? ' tool-select' : ''}${panel ? ' panel-open' : ''}${anim ? ' anim' : ''}`} ref={stage} onPointerDown={onStageDown} onPointerMove={onGuideMove} onPointerLeave={onGuideLeave}
+      <main className={`stage${tool === 'select' ? ' tool-select' : ''}${tool === 'zoom' ? ' tool-zoom' : ''}${panel ? ' panel-open' : ''}${anim ? ' anim' : ''}`} ref={stage} onPointerDown={onStageDown} onPointerMove={onGuideMove} onPointerLeave={onGuideLeave}
         style={{ backgroundPosition: `${view.x}px ${view.y}px`, backgroundSize: `${24 * view.s}px ${24 * view.s}px` }}>
         <aside className="side ui">
           <div className="logo">mind<b>map</b></div>
@@ -890,12 +930,14 @@ export default function MindMap({ user, current, initialData }) {
             Ctrl+Z / Ctrl+Y — desfazer/refazer<br />
           G — guias do mouse<br />
           S — selecionar vários (arraste) · M — mover tela<br />
+          Z — zoom em área (arraste o retângulo)<br />
           Shift+clique — soma à seleção (blocos e linhas) · Ctrl+A — todos<br />
           Selecionar em área também pega as linhas tocadas<br />
           Linha selecionada: Del desliga · arraste as bolinhas para religar<br />
           Botão 🔗 do bloco: arraste até outro bloco para ligar<br />
           F12 — tela cheia (Esc sai)<br />
-            Arraste um nó sobre outro para mover o ramo<br />
+            Arrastar move só o bloco (as linhas se esticam) · Alt+arrastar leva o ramo<br />
+            Soltar um bloco sobre outro liga-o a ele<br />
           Nó selecionado: arraste a alça direita para redimensionar
           </div>
         </aside>
@@ -905,7 +947,7 @@ export default function MindMap({ user, current, initialData }) {
               <g key={e.id}>
                 {selEdges.includes(e.id) && <path d={e.d} stroke={e.c} className="edge-halo" />}
                 <path d={e.d} stroke={e.c} />
-                <path d={e.d} className="edge-hit" onPointerDown={ev => { if (ev.button !== 0) return; ev.stopPropagation(); selectEdge(e.id, ev.shiftKey); }} />
+                <path d={e.d} className="edge-hit" onPointerDown={ev => { if (ev.button !== 0 || toolRef.current === 'zoom') return; ev.stopPropagation(); selectEdge(e.id, ev.shiftKey); }} />
               </g>
             ))}
           </g></svg>
@@ -945,7 +987,7 @@ export default function MindMap({ user, current, initialData }) {
           </g></svg>
         </div>
 
-        {marq && <div className="marquee" style={{ left: marq.x, top: marq.y, width: marq.w, height: marq.h }} />}
+        {marq && <div className={`marquee${marq.zoom ? ' zoom' : ''}`} style={{ left: marq.x, top: marq.y, width: marq.w, height: marq.h }} />}
         {msel.length > 1 && !readOnly && (() => {
           const ms = msel.map(id => nodes.find(n => n.id === id)).filter(n => n && vis.has(n.id) && sizes[n.id] && n.x != null);
           if (ms.length < 2) return null;
@@ -1043,6 +1085,7 @@ export default function MindMap({ user, current, initialData }) {
           <span className="seg">
             <button title="Mover a tela (M)" className={tool === 'pan' ? 'tog on' : 'tog'} onClick={() => setTool('pan')}>✋ Mover</button>
             <button title="Seleção em área: arraste para selecionar vários blocos (S) — ou Shift+arrastar / Shift+clique" className={tool === 'select' ? 'tog on' : 'tog'} onClick={() => setTool('select')}>⬚ Selecionar</button>
+            <button title="Zoom em uma área (Z): arraste um retângulo e a área vai para o centro da tela · clique aproxima, Shift+clique afasta · Esc cancela" className={tool === 'zoom' ? 'tog on' : 'tog'} onClick={() => pickTool(tool === 'zoom' ? prevTool.current : 'zoom')}>🔍 Zoom</button>
           </span>
           {msel.length > 1 && <span className="selcount">{msel.length} selecionados</span>}
           {!readOnly && <button title="Reorganiza todos os nós (desfazível)" onClick={organize}>Organizar</button>}

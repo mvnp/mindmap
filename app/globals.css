@@ -307,3 +307,7 @@ button { font: inherit; cursor: pointer; border: 0; background: none; color: inh
 .toolbar button.cut { padding: 0 10px; font-size: 13px; white-space: nowrap; }
 .toolbar .sep { width: 1px; height: 18px; background: #e3e3e3; margin: 0 6px; }
 .edges.edges-top { z-index: 6; }
+
+/* ===== ferramenta de zoom (Z) ===== */
+.stage.tool-zoom, .stage.tool-zoom .node, .stage.tool-zoom .edges path { cursor: zoom-in; }
+.marquee.zoom { border: 1.5px dashed #4f7cf7; background: #4f7cf714; }
