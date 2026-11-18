@@ -1,5 +1,7 @@
 'use client';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import DbViewer from './DbViewer';
+import ShareModal from './ShareModal';
 
 const PALETTE = ['#ff7b7b', '#ffb454', '#e8c53a', '#3fbf8f', '#5b8def', '#a77bf3', '#555555'];
 const COLORS = [...PALETTE, '#ffffff', '#222222'];
@@ -103,10 +105,20 @@ function edgeHitsRect(e, rx0, ry0, rx1, ry1) {
   return false;
 }
 
+// GET JSON; sessão expirada (401) volta ao login
+async function getJson(url) {
+  const r = await fetch(url);
+  if (r.status === 401) { window.location.href = '/login'; throw new Error('401'); }
+  return r.json();
+}
+
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
 /* ---------- componente ---------- */
-export default function MindMap() {
+// current: { id, uuid, name, papel: 'owner' | 'editor' | 'viewer', visibilidade } · initialData: dados do mapa para o visualizador
+export default function MindMap({ user, current, initialData }) {
+  const readOnly = current.papel === 'viewer';   // público: qualquer usuário cadastrado visualiza, sem editar
+  const isOwner = current.papel === 'owner';
   const [projects, setProjects] = useState([]);
   const [pid, setPid] = useState(null);
   const [nodes, setNodes] = useState([]);
@@ -128,6 +140,8 @@ export default function MindMap() {
   const [features, setFeatures] = useState([]);   // checklist de funcionalidades do Miro
   const [level, setLevel] = useState('all');        // filtro "Nível de importância"
   const [anim, setAnim] = useState(false);          // transições só depois do 1º render (sem animar ao restaurar o estado)
+  const [shareOpen, setShareOpen] = useState(false);  // modal de compartilhamento (dono)
+  const [dbOpen, setDbOpen] = useState(false);       // visualizador do banco (master)
   const [ctx, setCtx] = useState(null);           // menu de clique direito {x,y}
   const toolRef = useRef('pan'); toolRef.current = tool;
   const mselRef = useRef([]); mselRef.current = msel;
@@ -163,6 +177,7 @@ export default function MindMap() {
     queue.current = queue.current.then(async () => {
       try {
         const r = await fetch(url, { method, headers: jsonHeaders, keepalive: true, body: body ? JSON.stringify(body) : undefined });
+        if (r.status === 401) { window.location.href = '/login'; return; }
         if (!r.ok) throw new Error(r.status);
         if (--inflight.current === 0) setStatus('Salvo ✓');
       } catch { inflight.current--; setStatus('Erro ao salvar'); }
@@ -171,6 +186,7 @@ export default function MindMap() {
 
   // compara o último estado sincronizado com o atual e dispara create / update / delete
   const sync = useCallback(() => {
+    if (readOnly) return;
     const id = pidRef.current; if (!id) return;
     const prev = syncedRef.current, cur = nodesRef.current;
     if (prev === cur) return;
@@ -193,6 +209,7 @@ export default function MindMap() {
 
   // pan/zoom: só a visão é salva (com debounce)
   const scheduleSave = useCallback(() => {
+    if (readOnly) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       saveTimer.current = null;
@@ -208,6 +225,7 @@ export default function MindMap() {
 
   /* ----- mutações ----- */
   const mutate = useCallback(fn => {
+    if (readOnly) return;
     undo.current.push(nodesRef.current); if (undo.current.length > 100) undo.current.shift();
     redo.current = [];
     const next = fn(nodesRef.current);
@@ -219,37 +237,34 @@ export default function MindMap() {
   const patch = (id, p, o) => mutate(ns => ns.map(n => (n.id === id ? { ...n, ...p } : n)), o);
 
   /* ----- carregar projetos ----- */
-  const loadProject = useCallback(async id => {
-    if (pidRef.current && pidRef.current !== id) { sync(); flush(); }
-    const d = await (await fetch(`/api/projects/${id}`)).json();
+  const applyData = useCallback((d, id) => {
     undo.current = []; redo.current = [];
     pidRef.current = id; setPid(id);
     sizesRef.current = {}; setSizes({});
     setSel(null); setEditing(null); setStatus('');
     nodesRef.current = d.nodes; syncedRef.current = d.nodes; setNodes(d.nodes);
-    pendingLayout.current = d.nodes.some(n => n.x == null);
+    pendingLayout.current = !readOnly && d.nodes.some(n => n.x == null);
     if (d.view) { viewRef.current = d.view; setView(d.view); pendingFit.current = false; }
     else pendingFit.current = true;
-    try { localStorage.setItem('mm:pid', id); } catch {}
-  }, [flush, sync]);
+  }, []);
+  const loadProject = useCallback(async id => { applyData(await getJson(`/api/projects/${id}`), id); }, [applyData]);
 
   const refreshProjects = useCallback(async () => {
-    const list = await (await fetch('/api/projects')).json();
+    const list = await getJson('/api/projects');
     setProjects(list); return list;
   }, []);
 
   useEffect(() => {
     (async () => {
-      const list = await refreshProjects();
-      let id = list[0]?.id;
       try { setGuides(localStorage.getItem('mm:guides') !== '0'); } catch {}
       try { setPanel(localStorage.getItem('mm:panel') === '1'); setLevel(localStorage.getItem('mm:level') || 'all'); } catch {}
       requestAnimationFrame(() => requestAnimationFrame(() => setAnim(true)));
-      try { const s = Number(localStorage.getItem('mm:pid')); if (list.some(p => p.id === s)) id = s; } catch {}
-      if (id) loadProject(id);
+      refreshProjects().catch(() => {});
+      if (readOnly) applyData(initialData, current.id); else loadProject(current.id);
     })();
     // ao recarregar/fechar: confirma texto em edição e envia um snapshot completo (independe da fila)
     const onHide = () => {
+      if (readOnly) return;
       const id = pidRef.current; if (!id) return;
       const ed = editingRef.current;
       if (ed && editRef.current) actions.current.commitEdit(ed, editRef.current.textContent);
@@ -384,6 +399,7 @@ export default function MindMap() {
     }
     const group = mselRef.current.length > 1 && mselRef.current.includes(n.id);
     if (!group) { setMsel([]); setSel(n.id); setSelEdges([]); }
+    if (readOnly) return;
     // grupo: move todos os blocos selecionados (cada um com o seu ramo) de uma vez
     const ids = new Set();
     for (const gid of (group ? mselRef.current : [n.id])) descendants(nodesRef.current, gid).forEach(i => ids.add(i));
@@ -546,6 +562,10 @@ export default function MindMap() {
     const onKey = e => {
       if (e.target.closest?.('input, textarea, [contenteditable="true"]')) return;
       const a = actions.current, id = selRef.current;
+      if (readOnly) {   // somente leitura: só guias, ferramentas, seleção e Esc
+        const k = e.key.toLowerCase();
+        if (!(['g', 's', 'm', 'escape'].includes(k) || ((e.ctrlKey || e.metaKey) && k === 'a'))) return;
+      }
       if (e.key === 'Escape') setSelEdges([]);
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) a.doRedo(); else a.doUndo(); return; }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); a.doRedo(); return; }
@@ -619,6 +639,7 @@ export default function MindMap() {
   const STACK_GAP = 10;
   const onContextMenu = e => {
     e.preventDefault();
+    if (readOnly) return;
     if (!e.target.closest('.stage')) return setCtx(null);
     if (e.target.closest('.toolbar, .ui')) return;
     const nid = e.target.closest('.node')?.dataset.id;
@@ -672,7 +693,7 @@ export default function MindMap() {
   }, [ctx]);
 
   /* ----- funcionalidades (painel da direita) ----- */
-  useEffect(() => { fetch('/api/features').then(r => r.json()).then(setFeatures).catch(() => {}); }, []);
+  useEffect(() => { getJson('/api/features').then(setFeatures).catch(() => {}); }, []);
   const [copied, setCopied] = useState(null);
   const copyFeature = async f => {
     const text = f.explicacao_ia || '';
@@ -692,10 +713,16 @@ export default function MindMap() {
     } catch { setFeatures(list => list.map(x => (x.id === f.id ? { ...x, checked: !checked } : x))); }
   };
 
+  const logout = async () => {
+    try { sync(); flush(); await queue.current; } catch {}
+    try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
+    window.location.href = '/login';
+  };
+
   /* ----- exportar / importar ----- */
   const openExport = async () => {
     sync(); flush(); await queue.current;
-    const d = await (await fetch(`/api/projects/${pidRef.current}`)).json();
+    const d = await getJson(`/api/projects/${pidRef.current}`);
     setDlgText(JSON.stringify({ format: 'mindmap', version: 1, project: { name: d.project.name }, view: d.view, nodes: d.nodes }, null, 2));
     setDlgMsg(''); setDlg('export');
   };
@@ -718,25 +745,32 @@ export default function MindMap() {
   };
 
   /* ----- projetos ----- */
+  // cada projeto tem a sua URL única: /p/<uuid>
+  const goProject = async p => {
+    if (p.id === current.id) return;
+    try { sync(); flush(); await queue.current; } catch {}
+    window.location.href = `/p/${p.uuid}`;
+  };
   const newProject = async () => {
-    const name = prompt('Nome do projeto:', `Projeto ${projects.length + 1}`); if (!name?.trim()) return;
+    const name = prompt('Nome do projeto:', `Projeto ${projects.filter(p => p.papel === 'owner').length + 1}`); if (!name?.trim()) return;
     const p = await (await fetch('/api/projects', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name }) })).json();
-    await refreshProjects(); loadProject(p.id);
+    try { sync(); flush(); await queue.current; } catch {}
+    window.location.href = `/p/${p.uuid}`;
   };
   const renameProject = async p => {
+    if (p.papel !== 'owner') return;
     const name = prompt('Renomear projeto:', p.name); if (!name?.trim()) return;
     await fetch(`/api/projects/${p.id}`, { method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ name }) });
     refreshProjects();
   };
   const deleteProject = async p => {
-    if (!confirm(`Excluir "${p.name}" e todo o seu mapa?`)) return;
+    if (p.papel !== 'owner' || !confirm(`Excluir "${p.name}" e todo o seu mapa?`)) return;
+    if (p.id === current.id) { clearTimeout(saveTimer.current); saveTimer.current = null; pidRef.current = null; syncedRef.current = []; }
     await fetch(`/api/projects/${p.id}`, { method: 'DELETE' });
-    const list = await refreshProjects();
-    if (p.id === pid) {
-      pidRef.current = null; clearTimeout(saveTimer.current); saveTimer.current = null; syncedRef.current = [];
-      if (list[0]) loadProject(list[0].id); else { setPid(null); setNodes([]); }
-    }
+    if (p.id === current.id) { window.location.href = '/'; return; }
+    refreshProjects();
   };
+  useEffect(() => { if (readOnly && editing) setEditing(null); }, [readOnly, editing]);
 
   /* ----- render ----- */
   const vis = visibleSet(nodes);
@@ -747,7 +781,7 @@ export default function MindMap() {
   const defSize = n => n.size || (n.id === rootId ? 22 : 16);
   const tb = sn && sizes[sn.id] && sn.x != null && editing !== sn.id
     ? { left: view.x + (sn.x + sizes[sn.id].w / 2) * view.s, top: view.y + sn.y * view.s - 54 } : null;
-  const curName = projects.find(p => p.id === pid)?.name;
+  const curName = projects.find(p => p.id === pid)?.name || current.name;
 
   return (
     <div className={`app${full ? ' full' : ''}${guides ? ' g' : ''}`} onContextMenu={onContextMenu}>
@@ -756,12 +790,26 @@ export default function MindMap() {
         style={{ backgroundPosition: `${view.x}px ${view.y}px`, backgroundSize: `${24 * view.s}px ${24 * view.s}px` }}>
         <aside className="side ui">
           <div className="logo">mind<b>map</b></div>
+          <div className="userbox">
+            <div className="u-name">{user.nome} {user.sobrenome}{user.master && <em>master</em>}</div>
+            <div className="u-mail" title={user.email}>{user.email}</div>
+            <div className="u-actions">
+              {user.master && <button onClick={() => setDbOpen(true)} title="Ver as tabelas e os dados do banco">Banco de dados</button>}
+              <button className="u-out" onClick={logout}>Sair</button>
+            </div>
+          </div>
           <div className="side-h">Projetos <button className="icon" title="Novo projeto" onClick={newProject}>＋</button></div>
           <ul>
-            {projects.map(p => (
-              <li key={p.id} className={p.id === pid ? 'on' : ''} onClick={() => loadProject(p.id)} onDoubleClick={() => renameProject(p)}>
+            {projects.filter(p => p.papel === 'owner').map(p => (
+              <li key={p.id} className={p.id === current.id ? 'on' : ''} onClick={() => goProject(p)} onDoubleClick={() => renameProject(p)}>
                 <span>{p.name}</span>
                 <button className="icon sm" title="Excluir" onClick={e => { e.stopPropagation(); deleteProject(p); }}>×</button>
+              </li>
+            ))}
+            {projects.some(p => p.papel !== 'owner') && <li className="sh-title">Compartilhados comigo</li>}
+            {projects.filter(p => p.papel !== 'owner').map(p => (
+              <li key={p.id} className={p.id === current.id ? 'on' : ''} onClick={() => goProject(p)} title={`Dono: ${p.dono}`}>
+                <span>{p.name}<small className="dono">{p.dono}</small></span>
               </li>
             ))}
           </ul>
@@ -797,7 +845,7 @@ export default function MindMap() {
               <div key={n.id} data-id={n.id} ref={el => { if (el) nodeEls.current[n.id] = el; else delete nodeEls.current[n.id]; }}
                 className={`node${n.w ? ' fw' : ''}${isRoot ? ' root' : ''}${sel === n.id || msel.includes(n.id) ? ' sel' : ''}${dropT === n.id ? ' drop' : ''}`}
                 style={{ left: n.x ?? 0, top: n.y ?? 0, visibility: n.x == null ? 'hidden' : 'visible', fontSize: defSize(n), fontWeight: n.bold || isRoot ? 700 : 400, ...(n.w ? { width: n.w } : {}), ...(isRoot || n.bg ? { background: n.bg || color } : {}), ...(n.fg ? { color: n.fg } : {}) }}
-                onPointerDown={e => onNodeDown(e, n)} onDoubleClick={e => { e.stopPropagation(); setSel(n.id); setEditing(n.id); }}>
+                onPointerDown={e => onNodeDown(e, n)} onDoubleClick={e => { e.stopPropagation(); setSel(n.id); if (!readOnly) setEditing(n.id); }}>
                 <span key={isEd ? 'e' : 'v'} className="txt" ref={isEd ? editRef : null}
                   contentEditable={isEd} suppressContentEditableWarning spellCheck={false}
                   onBlur={e => isEd && commitEdit(n.id, e.currentTarget.textContent)}
@@ -810,7 +858,7 @@ export default function MindMap() {
                   onInput={() => bump(v => v + 1)}>
                   {isEd ? null : n.text}
                 </span>
-                {sel === n.id && !isEd && <span className="rz" title="Arraste para redimensionar · duplo clique = linha inteira" onPointerDown={e => onResizeDown(e, n)} onDoubleClick={e => { e.stopPropagation(); patch(n.id, { w: null }); }} />}
+                {sel === n.id && !isEd && !readOnly && <span className="rz" title="Arraste para redimensionar · duplo clique = linha inteira" onPointerDown={e => onResizeDown(e, n)} onDoubleClick={e => { e.stopPropagation(); patch(n.id, { w: null }); }} />}
                 {n.collapsed && nk > 0 && <button className="badge" style={{ background: color }} onClick={() => toggleCollapse(n.id)}>+{descendants(nodes, n.id).size - 1}</button>}
               </div>
             );
@@ -818,7 +866,7 @@ export default function MindMap() {
         </div>
 
         {marq && <div className="marquee" style={{ left: marq.x, top: marq.y, width: marq.w, height: marq.h }} />}
-        {msel.length > 1 && (() => {
+        {msel.length > 1 && !readOnly && (() => {
           const ms = msel.map(id => nodes.find(n => n.id === id)).filter(n => n && vis.has(n.id) && sizes[n.id] && n.x != null);
           if (ms.length < 2) return null;
           const ids = ms.map(n => n.id);
@@ -838,7 +886,7 @@ export default function MindMap() {
             </div>
           );
         })()}
-        {ses.length > 0 && msel.length < 2 && (() => {
+        {ses.length > 0 && msel.length < 2 && !readOnly && (() => {
           const ids = ses.map(e => e.id);
           const lcs = ids.map(id => nodes.find(n => n.id === id)?.lc || null);
           const same = lcs.every(c => c === lcs[0]);
@@ -851,7 +899,7 @@ export default function MindMap() {
             </div>
           );
         })()}
-        {tb && !msel.length && !selEdges.length && (
+        {tb && !msel.length && !selEdges.length && !readOnly && (
           <div className="toolbar" style={{ left: tb.left, top: tb.top }} onPointerDown={e => e.stopPropagation()}>
             <button title="Cores: bloco, texto e linha" onClick={() => setPalOpen(o => !o)}>🎨</button>
             <span className="sep" />
@@ -891,7 +939,7 @@ export default function MindMap() {
           <div className="rpanel-b">
             {features.filter(f => level === 'all' || f.importancia === Number(level)).map(f => (
               <label key={f.id} className={`feat${f.checked ? ' done' : ''}`}>
-                <input type="checkbox" checked={f.checked} onChange={() => toggleFeature(f)} />
+                <input type="checkbox" checked={f.checked} disabled={!user.master} title={user.master ? undefined : "Somente o master marca como desenvolvida"} onChange={() => toggleFeature(f)} />
                 <span className="feat-t"><span>{f.titulo}</span>
                   <span className="feat-r"><em title="Nível de importância">{f.importancia}</em>
                     <button type="button" className={`copy${copied === f.id ? ' ok' : ''}`} title="Copiar explicação para IA"
@@ -914,15 +962,18 @@ export default function MindMap() {
             <button title="Seleção em área: arraste para selecionar vários blocos (S) — ou Shift+arrastar / Shift+clique" className={tool === 'select' ? 'tog on' : 'tog'} onClick={() => setTool('select')}>⬚ Selecionar</button>
           </span>
           {msel.length > 1 && <span className="selcount">{msel.length} selecionados</span>}
-          <button title="Reorganiza todos os nós (desfazível)" onClick={organize}>Organizar</button>
+          {!readOnly && <button title="Reorganiza todos os nós (desfazível)" onClick={organize}>Organizar</button>}
           <button onClick={() => fit()}>Ajustar</button>
           <button title="Guias cartesianas que seguem o mouse (G)" className={guides ? 'tog on' : 'tog'} onClick={toggleGuides}>Guias</button>
-          <button title="Exportar mapa em JSON" onClick={openExport}>Exportar</button>
-          <button title="Importar mapa de um JSON" onClick={openImport}>Importar</button>
+          {!readOnly && <button title="Exportar mapa em JSON" onClick={openExport}>Exportar</button>}
+          {!readOnly && <button title="Importar mapa de um JSON" onClick={openImport}>Importar</button>}
+          {isOwner && <button className="share-btn" title="URL única, visibilidade e convites" onClick={() => setShareOpen(true)}>Compartilhar</button>}
+          {readOnly && <span className="selcount ro" title="Projeto público: você pode visualizar, não editar">Somente leitura</span>}
+          {current.papel === 'editor' && <span className="selcount">Colaborador</span>}
           <button title="Tela cheia (F12)" onClick={() => { setFull(true); document.documentElement.requestFullscreen?.().catch(() => {}); }}>⛶</button>
           <span className="status">{status}</span>
         </div>
-        <div className="undo ui">
+        <div className="undo ui" style={readOnly ? { display: 'none' } : undefined}>
           <button title="Desfazer" onClick={doUndo}>↶</button>
           <button title="Refazer" onClick={doRedo}>↷</button>
         </div>
@@ -959,6 +1010,8 @@ export default function MindMap() {
           </button>
         </div>
       )}
+      {dbOpen && <DbViewer onClose={() => setDbOpen(false)} />}
+      {shareOpen && <ShareModal projectId={current.id} onClose={() => setShareOpen(false)} />}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { listFeatures } from '@/lib/db';
+import { withAuth } from '@/lib/auth';
 export const dynamic = 'force-dynamic';
 
-export async function GET() { return Response.json(listFeatures()); }
+export const GET = withAuth(async () => Response.json(listFeatures()));

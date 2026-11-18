@@ -3,3 +3,4 @@ node_modules
 mindmap.db*
 *.log
 .env*
+!.env.example

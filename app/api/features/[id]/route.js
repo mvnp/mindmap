@@ -1,8 +1,9 @@
 import { setFeatureChecked, HttpError } from '@/lib/db';
+import { withAuth } from '@/lib/auth';
 export const dynamic = 'force-dynamic';
 
-// PATCH { checked: boolean } — marca/desmarca a funcionalidade como desenvolvida
-export async function PATCH(req, { params }) {
+// PATCH { checked: boolean } — só o master marca/desmarca funcionalidades como desenvolvidas
+export const PATCH = withAuth(async (req, { params }) => {
   try {
     const { checked } = await req.json();
     setFeatureChecked(Number((await params).id), !!checked);
@@ -10,4 +11,4 @@ export async function PATCH(req, { params }) {
   } catch (e) {
     return Response.json({ error: e.message }, { status: e instanceof HttpError ? e.status : 400 });
   }
-}
+}, { master: true });

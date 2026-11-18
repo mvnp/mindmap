@@ -1,5 +1,7 @@
 node_modules
 .next
 mindmap.db*
+.env*
+!.env.example
 Dockerfile
 .dockerignore

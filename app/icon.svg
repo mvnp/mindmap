@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>Mindmap</title>
+  <g fill="none" stroke-width="4.5" stroke-linecap="round">
+    <path d="M24 32 C34 32 32 13 44 13" stroke="#5b8def"/>
+    <path d="M24 32 H44" stroke="#e8c53a"/>
+    <path d="M24 32 C34 32 32 51 44 51" stroke="#3fbf8f"/>
+  </g>
+  <rect x="3" y="20" width="24" height="24" rx="8" fill="#ff6b6b"/>
+  <circle cx="51" cy="13" r="7" fill="#5b8def"/>
+  <circle cx="51" cy="32" r="7" fill="#e8c53a"/>
+  <circle cx="51" cy="51" r="7" fill="#3fbf8f"/>
+</svg>

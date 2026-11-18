@@ -43,6 +43,23 @@ npm run build && npm start
 
 O banco é criado em `./mindmap.db`. Para usar outro caminho: `MINDMAP_DB=/caminho/mindmap.db`.
 
+## Contas, login e usuário master
+
+Todas as rotas exigem login, exceto **login, cadastro, recuperar/redefinir senha e verificação**. Cada projeto pertence a um usuário.
+
+- **Cadastro:** nome, sobrenome, e-mail, telefone (máscara brasileira na tela; no banco vai só com dígitos) e senha (mín. 8 caracteres, guardada com hash scrypt).
+- **Verificação de e-mail e "esqueci a senha":** usam links especiais de uso único (`/verificar?token=…`, `/redefinir-senha?token=…`). Ainda não há envio de e-mail: os links aparecem no log do servidor (`docker logs mindmap`). A conta nasce com `verificado = 0` e **não consegue entrar** até clicar no link de confirmação (que então redireciona para o login). O login oferece "Reenviar e-mail de confirmação".
+- **Sair:** botão na barra lateral.
+- **Master:** coluna `master` (padrão 0). O master vê o botão **Banco de dados** (tela cheia, com as tabelas e seus dados; hashes ficam ocultos) e é o único que marca funcionalidades como desenvolvidas.
+
+Criar (ou atualizar) o usuário master, vinculando a ele os projetos que ainda não têm dono:
+
+```bash
+docker exec -e MASTER_PASSWORD='sua-senha' mindmap node scripts/create-master.mjs --nome Nome --sobrenome Sobrenome --email voce@exemplo.com
+```
+
+A senha nunca fica no código nem no repositório. Em produção, defina `APP_URL` (ex.: `https://mindmap.exemplo.com`) para os links especiais, e sirva por HTTPS (o cookie de sessão ganha `Secure` automaticamente atrás de proxy com `X-Forwarded-Proto: https`).
+
 ## Como usar
 
 - **Projetos:** painel à esquerda. `＋` cria, duplo clique renomeia, `×` exclui. Cada projeto tem o seu mapa.
@@ -71,7 +88,9 @@ Outros: arraste a tela para navegar e use a roda do mouse para zoom; arraste um 
 
 | Método e rota | Função |
 |---|---|
-| `GET/POST /api/projects` | listar / criar projetos |
+| `POST /api/auth/register · login · logout · forgot · reset · verify`, `GET /api/auth/me` | autenticação |
+| `GET /api/admin/tables[/nome]` | (master) tabelas do banco e seus dados |
+| `GET/POST /api/projects` | listar / criar projetos do usuário logado |
 | `GET/PATCH/DELETE /api/projects/:id` | ler (com nós) / renomear ou salvar visão / excluir |
 | `POST /api/projects/:id/nodes` | criar nó `{ node, after? }` |
 | `PATCH /api/projects/:id/nodes` | atualizar nós em lote `{ patches }` |
