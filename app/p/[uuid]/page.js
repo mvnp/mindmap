@@ -24,7 +24,7 @@ export default async function ProjectPage({ params }) {
           <div className="auth-logo">mind<b>map</b></div>
           <h1>Sem acesso a este projeto</h1>
           <p className="auth-sub">O projeto não existe ou o dono não compartilhou com você. Se recebeu um convite por e-mail, abra o link do convite.</p>
-          <div className="auth-foot"><Link href="/">Ir para os meus projetos</Link></div>
+          <div className="auth-foot"><Link href="/meus-mapas">Ir para os meus projetos</Link></div>
         </div>
       </div>
     );

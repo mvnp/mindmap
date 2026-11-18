@@ -767,7 +767,7 @@ export default function MindMap({ user, current, initialData }) {
     if (p.papel !== 'owner' || !confirm(`Excluir "${p.name}" e todo o seu mapa?`)) return;
     if (p.id === current.id) { clearTimeout(saveTimer.current); saveTimer.current = null; pidRef.current = null; syncedRef.current = []; }
     await fetch(`/api/projects/${p.id}`, { method: 'DELETE' });
-    if (p.id === current.id) { window.location.href = '/'; return; }
+    if (p.id === current.id) { window.location.href = '/meus-mapas'; return; }
     refreshProjects();
   };
   useEffect(() => { if (readOnly && editing) setEditing(null); }, [readOnly, editing]);

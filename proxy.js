@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 
-// Primeira barreira: tudo exige sessão, exceto login, cadastro, recuperação/redefinição de senha e verificação.
+// Primeira barreira: tudo exige sessão, exceto a landing page (/ e /landingpage), login, cadastro, recuperação/redefinição de senha e verificação.
 // (A validação real da sessão é feita no banco, nas rotas de API e na página inicial.)
-const PUBLIC_PAGES = ['/login', '/cadastro', '/recuperar-senha', '/redefinir-senha', '/verificar', '/convite'];
+const PUBLIC_PAGES = ['/', '/landingpage', '/login', '/cadastro', '/recuperar-senha', '/redefinir-senha', '/verificar', '/convite'];
 // /api/invites: convite por token (o aceite exige login na própria rota). /p/<uuid> exige login (cadastro na ferramenta)
 const PUBLIC_PREFIXES = ['/api/invites/'];
 const PUBLIC_API = ['/api/auth/login', '/api/auth/register', '/api/auth/forgot', '/api/auth/reset', '/api/auth/verify', '/api/auth/resend', '/api/auth/logout'];

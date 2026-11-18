@@ -10,7 +10,7 @@ export default function LoginPage() {
   const { submit, busy, error, status } = useSubmit('/api/auth/login', () => {
     // volta para a página pedida (?next=), só caminhos do próprio site
     const next = new URLSearchParams(window.location.search).get('next');
-    window.location.href = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
+    window.location.href = next && next.startsWith('/') && !next.startsWith('//') ? next : '/meus-mapas';
   });
 
   useEffect(() => {
