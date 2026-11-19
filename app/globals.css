@@ -428,3 +428,14 @@ button { font: inherit; cursor: pointer; border: 0; background: none; color: inh
 .proj-modal input, .proj-modal textarea { font: inherit; font-weight: 400; font-size: 14px; color: #222; border: 1px solid #ddd; border-radius: 8px; padding: 8px 10px; outline: none; height: auto; resize: vertical; }
 .proj-modal input:focus, .proj-modal textarea:focus { border-color: #7c4dff; }
 .modal-actions .danger { background: #d64545; color: #fff; }
+
+/* arquivos de texto anexados ao chat */
+.ai-docs { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-docs span { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; background: #f1ecff; color: #4b3a8c; border-radius: 8px; padding: 3px 4px 3px 8px; font-size: 12px; }
+.ai-docs em { font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+.ai-docs small { color: #8a7fb0; }
+.ai-docs button { width: 18px; height: 18px; border-radius: 50%; font-size: 13px; line-height: 1; }
+.ai-docs button:hover { background: #0002; }
+.ai-attmsg { font-size: 12px; color: #b3402a; }
+.ai-files { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.ai-files span { background: #ffffff33; border-radius: 6px; padding: 1px 6px; font-size: 12px; }

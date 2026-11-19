@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { runAgent, repairHistory, StopError } from './ai/agent';
 import { fileToImage } from './ai/screenshot';
 
+const MAX_DOCS = 5, MAX_DOC_BYTES = 200 * 1024, MAX_DOCS_TOTAL = 400 * 1024;
 const SPEEDS = [
   { id: 'slow', nome: 'Lento', m: 1.5 },
   { id: 'normal', nome: 'Normal', m: 0.55 },
@@ -123,6 +124,8 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
   const [log, setLog] = useState([]);
   const [input, setInput] = useState('');
   const [atts, setAtts] = useState([]);
+  const [docs, setDocs] = useState([]);      // arquivos de texto anexados: { name, text, size }
+  const [attMsg, setAttMsg] = useState('');
   const [autoShot, setAutoShot] = useState(true);
   const [speed, setSpeed] = useState('normal');
   const [status, setStatus] = useState('idle');     // idle | running | paused
@@ -183,13 +186,14 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
   const send = async (text, resume = false) => {
     if (status !== 'idle' || !api.current || api.current.readOnly) return;
     if (!settings?.temChave) { setSetup(true); return; }
-    const t = text.trim();
+    const t = text.trim() || (!resume && docs.length ? 'Monte o mapa mental a partir do conteúdo dos arquivos anexados.' : '');
     if (!t && !resume) return;
 
     // conteúdo da mensagem: print da tela + anexos + estado do mapa + o pedido
     const blocks = []; let shotUrl = null;
     if (autoShot) { try { const s = api.current.screenshot(false); blocks.push(imgBlock(s)); shotUrl = s.url; } catch (e) { console.error(e); } }
     for (const a of atts) blocks.push(imgBlock(a));
+    for (const d of docs) blocks.push({ type: 'text', text: `<arquivo nome="${d.name.replace(/["<>\r\n]/g, '_')}">\n${d.text}\n</arquivo>` });
     blocks.push({ type: 'text', text: `<estado_do_mapa>\n${api.current.context()}\n</estado_do_mapa>` });
     blocks.push({ type: 'text', text: resume
       ? `Continue de onde parou. O trabalho foi interrompido antes de terminar. Ações já executadas desde o meu pedido: ${acts.current.length ? acts.current.join(' | ') : 'nenhuma'}. O estado atual do mapa está acima; complete o que faltava do pedido original, sem refazer o que já existe.`
@@ -201,7 +205,7 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
     else messages.current.push({ role: 'user', content: blocks });
 
     if (resume) push({ k: 'note', t: '▶ Retomando…' });
-    else { acts.current = []; runRef.current = { id: crypto.randomUUID(), prompt: t }; push({ k: 'user', t, imgs: [shotUrl && { url: shotUrl, label: 'tela' }, ...atts.map(a => ({ url: a.url, label: 'anexo' }))].filter(Boolean) }); setInput(''); setAtts([]); api.current.begin(); }
+    else { acts.current = []; runRef.current = { id: crypto.randomUUID(), prompt: t }; push({ k: 'user', t, imgs: [shotUrl && { url: shotUrl, label: 'tela' }, ...atts.map(a => ({ url: a.url, label: 'anexo' }))].filter(Boolean), files: docs.map(d => d.name) }); setInput(''); setAtts([]); setDocs([]); setAttMsg(''); api.current.begin(); }
 
     stoppedRef.current = false; pausedRef.current = false;
     const ac = new AbortController(); abortRef.current = ac;
@@ -231,16 +235,31 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
     try { localStorage.removeItem(storageKey); } catch {}
   };
 
+  // imagens vão como imagem; QUALQUER outro arquivo é aceito se for texto (qualquer extensão): lido como UTF-8, binários são recusados
   const addFiles = async files => {
+    const msgs = []; let room = MAX_DOCS - docs.length, total = docs.reduce((n, d) => n + d.size, 0);
     for (const f of files) {
-      if (!f.type.startsWith('image/')) continue;
-      try { const img = await fileToImage(f); setAtts(a => (a.length >= 3 ? a : [...a, img])); } catch {}
+      if (f.type.startsWith('image/')) {
+        try { const img = await fileToImage(f); setAtts(a => (a.length >= 3 ? a : [...a, img])); } catch {}
+        continue;
+      }
+      if (room <= 0) { msgs.push(`Máximo de ${MAX_DOCS} arquivos de texto por mensagem.`); break; }
+      if (f.size > MAX_DOC_BYTES) { msgs.push(`“${f.name}” passa de ${MAX_DOC_BYTES / 1024} KB.`); continue; }
+      if (total + f.size > MAX_DOCS_TOTAL) { msgs.push(`“${f.name}”: o total dos arquivos passaria de ${MAX_DOCS_TOTAL / 1024} KB.`); continue; }
+      let text;
+      try { text = await f.text(); } catch { msgs.push(`Não consegui ler “${f.name}”.`); continue; }
+      if (text.includes('\u0000') || (text.match(/\uFFFD/g) || []).length > Math.max(3, text.length * 0.01)) { msgs.push(`“${f.name}” não parece um arquivo de texto.`); continue; }
+      if (!text.trim()) { msgs.push(`“${f.name}” está vazio.`); continue; }
+      room--; total += f.size;
+      setDocs(d => [...d, { name: f.name, text, size: f.size }]);
     }
+    setAttMsg(msgs.join(' '));
   };
   const onPaste = e => {
-    const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/'));
+    const files = [...(e.clipboardData?.files || [])];
     if (files.length) { e.preventDefault(); addFiles(files); }
   };
+  const onDrop = e => { const files = [...(e.dataTransfer?.files || [])]; if (files.length) { e.preventDefault(); addFiles(files); } };
 
   if (api.current?.readOnly) return null;
   const running = status !== 'idle';
@@ -263,7 +282,7 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
         : <button className={`ai-fab ui${panelOpen ? ' po' : ''}`} title="Assistente de IA" onClick={() => setOpen(true)}>✦ IA{interrupted && <span className="ai-badge">!</span>}</button>)}
 
       {open && (
-        <section className={`ai-dock ui${panelOpen ? ' po' : ''}${wide ? ' wide' : ''}`} onPointerDown={e => e.stopPropagation()}>
+        <section className={`ai-dock ui${panelOpen ? ' po' : ''}${wide ? ' wide' : ''}`} onPointerDown={e => e.stopPropagation()} onDragOver={e => e.preventDefault()} onDrop={onDrop}>
           <header className="ai-head">
             <span className={`ai-dot ${status}`} />
             <b style={{ whiteSpace: 'nowrap' }}>Assistente IA</b>
@@ -291,6 +310,7 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
             {log.map(m => (
               <div key={m.id} className={`ai-m ${m.k}${m.err ? ' bad' : ''}`}>
                 {m.k === 'user' && m.imgs?.length > 0 && <div className="ai-imgs">{m.imgs.map((im, i) => <img key={i} src={im.url} alt={im.label} title={im.label} />)}</div>}
+                {m.k === 'user' && m.files?.length > 0 && <div className="ai-files">{m.files.map((n, i) => <span key={i}>📄 {n}</span>)}</div>}
                 {m.t}
               </div>
             ))}
@@ -306,16 +326,18 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
                 {SPEEDS.map(s => <option key={s.id} value={s.id}>{s.nome}</option>)}
               </select>
               <button className={`ai-ic${autoShot ? ' on' : ''}`} title={autoShot ? 'A IA recebe um print da tela a cada mensagem (clique para desligar)' : 'Enviar print da tela com cada mensagem (desligado)'} onClick={() => setAutoShot(v => !v)}>👁</button>
-              <button className="ai-ic" title="Anexar imagem" disabled={running || atts.length >= 3} onClick={() => fileIn.current?.click()}>📎</button>
-              <input ref={fileIn} type="file" accept="image/*" multiple hidden onChange={e => { addFiles([...e.target.files]); e.target.value = ''; }} />
+              <button className="ai-ic" title="Anexar imagem ou arquivo de texto (qualquer extensão) — também dá para colar ou soltar aqui" disabled={running} onClick={() => fileIn.current?.click()}>📎</button>
+              <input ref={fileIn} type="file" multiple hidden onChange={e => { addFiles([...e.target.files]); e.target.value = ''; }} />
             </div>
+            {docs.length > 0 && <div className="ai-docs">{docs.map((d, i) => <span key={i} title={`${d.name} · ${(d.size / 1024).toFixed(1)} KB`}>📄 <em>{d.name}</em><small>{(d.size / 1024).toFixed(1)} KB</small><button title="Remover" onClick={() => setDocs(x => x.filter((_, j) => j !== i))}>×</button></span>)}</div>}
+            {attMsg && <div className="ai-attmsg">{attMsg}</div>}
             {atts.length > 0 && <div className="ai-atts">{atts.map((a, i) => <span key={i}><img src={a.url} alt="" /><button title="Remover" onClick={() => setAtts(x => x.filter((_, j) => j !== i))}>×</button></span>)}</div>}
             <div className="ai-inrow">
               <textarea rows={2} value={input} placeholder={running ? 'Trabalhando… use ■ Parar para interromper' : 'Peça algo ao mapa… (Enter envia · Shift+Enter quebra linha · cole imagens)'}
                 onChange={e => setInput(e.target.value)} onPaste={onPaste} disabled={running}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(input); } e.stopPropagation(); }} />
               <div className="ai-side">
-                <button className="ai-send" title="Enviar" disabled={running || !input.trim()} onClick={() => send(input)}>➤</button>
+                <button className="ai-send" title="Enviar" disabled={running || (!input.trim() && !docs.length)} onClick={() => send(input)}>➤</button>
               </div>
             </div>
           </div>
