@@ -32,6 +32,14 @@ const jsonHeaders = { 'Content-Type': 'application/json' };
 
 /* ---------- componente ---------- */
 // current: { id, uuid, name, papel: 'owner' | 'editor' | 'viewer', visibilidade } · initialData: dados do mapa para o visualizador
+const HELP = [
+  { t: 'Criar e editar', i: [['Tab', 'criar filho'], ['Enter', 'criar irmão'], ['F2 / duplo clique', 'editar o texto'], ['Del', 'excluir bloco (e seu ramo)'], ['Espaço', 'recolher / expandir o ramo'], ['Ctrl+Z / Ctrl+Y', 'desfazer / refazer']] },
+  { t: 'Seleção', i: [['S', 'selecionar vários (arraste); também pega as linhas tocadas'], ['Shift+clique', 'soma à seleção (blocos e linhas)'], ['Ctrl+A', 'seleciona tudo'], ['M', 'mover a tela']] },
+  { t: 'Navegação', i: [['Roda do mouse', 'zoom'], ['Z', 'zoom em área (arraste o retângulo)'], ['G', 'guias do mouse'], ['F12', 'tela cheia (Esc sai)']] },
+  { t: 'Blocos e linhas', i: [['Arrastar', 'move só o bloco (as linhas se esticam)'], ['Alt+arrastar', 'leva o ramo junto'], ['Soltar sobre outro', 'liga o bloco a ele'], ['Botão 🔗 do bloco', 'arraste até outro bloco para ligar'], ['Linha selecionada', 'Del desliga · arraste as bolinhas para religar']] },
+  { t: 'Redimensionar', i: [['Alças esq./dir.', 'arraste no bloco selecionado; o texto quebra linha'], ['Vários selecionados', 'redimensiona todos para a mesma largura'], ['Duplo clique na alça', 'volta à largura automática']] },
+];
+
 export default function MindMap({ user, current, initialData }) {
   const readOnly = current.papel === 'viewer';   // público: qualquer usuário cadastrado visualiza, sem editar
   const isOwner = current.papel === 'owner';
@@ -77,6 +85,8 @@ export default function MindMap({ user, current, initialData }) {
   const sizesRef = useRef({});
   const undo = useRef([]); const redo = useRef([]);
   const pendingLayout = useRef(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  useEffect(() => { if (!helpOpen) return; const k = e => { if (e.key === 'Escape') setHelpOpen(false); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [helpOpen]);
   const pendingFit = useRef(false);
   const pushPending = useRef(false);           // após redimensionar: reajustar o espaço entre os blocos assim que forem medidos
   const syncAfterPush = useRef(false);         // ...e, no fim do arrasto, salvar já com as posições reajustadas
@@ -778,14 +788,22 @@ export default function MindMap({ user, current, initialData }) {
     try { sync(); flush(); await queue.current; } catch {}
     window.location.href = `/p/${p.uuid}`;
   };
-  const renameProject = async p => {
-    if (p.papel !== 'owner') return;
-    const name = prompt('Renomear projeto:', p.name); if (!name?.trim()) return;
-    await fetch(`/api/projects/${p.id}`, { method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ name }) });
-    refreshProjects();
+  // editar (modal com nome e descrição) e excluir (modal de confirmação): nada de prompt/confirm do navegador
+  const [projDlg, setProjDlg] = useState(null);   // { kind: 'edit' | 'delete', p, name, descricao, err, busy }
+  const renameProject = p => { if (p.papel === 'owner') setProjDlg({ kind: 'edit', p, name: p.name, descricao: p.descricao || '' }); };
+  const askDelete = p => { if (p.papel === 'owner') setProjDlg({ kind: 'delete', p }); };
+  const saveProject = async () => {
+    const d = projDlg; if (!d || d.busy) return;
+    if (!d.name.trim()) return setProjDlg({ ...d, err: 'Informe o nome do projeto.' });
+    setProjDlg({ ...d, busy: true, err: '' });
+    try {
+      const r = await fetch(`/api/projects/${d.p.id}`, { method: 'PATCH', headers: jsonHeaders, body: JSON.stringify({ name: d.name, descricao: d.descricao }) });
+      if (!r.ok) throw new Error();
+      await refreshProjects(); setProjDlg(null);
+    } catch { setProjDlg({ ...d, busy: false, err: 'Não foi possível salvar. Tente de novo.' }); }
   };
   const deleteProject = async p => {
-    if (p.papel !== 'owner' || !confirm(`Excluir "${p.name}" e todo o seu mapa?`)) return;
+    setProjDlg(null);
     if (p.id === current.id) { clearTimeout(saveTimer.current); saveTimer.current = null; pidRef.current = null; syncedRef.current = []; }
     await fetch(`/api/projects/${p.id}`, { method: 'DELETE' });
     if (p.id === current.id) { window.location.href = '/meus-mapas'; return; }
@@ -872,12 +890,19 @@ export default function MindMap({ user, current, initialData }) {
               <button className="u-out" onClick={logout}>Sair</button>
             </div>
           </div>
-          <div className="side-h">Projetos <button className="icon" title="Novo projeto" onClick={newProject}>＋</button></div>
+          <div className="side-h">Projetos <span className="side-btns"><button className="icon help-btn" title="Atalhos e ajuda" aria-label="Ajuda: atalhos" onClick={() => setHelpOpen(true)}>?</button><button className="icon" title="Novo projeto" onClick={newProject}>＋</button></span></div>
           <ul>
             {projects.filter(p => p.papel === 'owner').map(p => (
-              <li key={p.id} className={p.id === current.id ? 'on' : ''} onClick={() => goProject(p)} onDoubleClick={() => renameProject(p)}>
-                <span>{p.name}</span>
-                <button className="icon sm" title="Excluir" onClick={e => { e.stopPropagation(); deleteProject(p); }}>×</button>
+              <li key={p.id} className={p.id === current.id ? 'on' : ''} onClick={() => goProject(p)} onDoubleClick={() => renameProject(p)} title={p.descricao || undefined}>
+                <span className="pname">{p.name}</span>
+                <span className="pacts">
+                  <button className="icon sm" title="Editar nome e descrição" aria-label="Editar projeto" onClick={e => { e.stopPropagation(); renameProject(p); }}>
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 2.5l2.5 2.5L5.5 13 2 14l1-3.5z" /></svg>
+                  </button>
+                  <button className="icon sm del" title="Excluir projeto" aria-label="Excluir projeto" onClick={e => { e.stopPropagation(); askDelete(p); }}>
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.5 7v4M9.5 7v4" /></svg>
+                  </button>
+                </span>
               </li>
             ))}
             {projects.some(p => p.papel !== 'owner') && <li className="sh-title">Compartilhados comigo</li>}
@@ -887,24 +912,6 @@ export default function MindMap({ user, current, initialData }) {
               </li>
             ))}
           </ul>
-          <div className="help">
-            <b>Atalhos</b><br />
-            Tab — filho · Enter — irmão<br />
-            F2 / duplo clique — editar<br />
-            Del — excluir · Espaço — recolher<br />
-            Ctrl+Z / Ctrl+Y — desfazer/refazer<br />
-          G — guias do mouse<br />
-          S — selecionar vários (arraste) · M — mover tela<br />
-          Z — zoom em área (arraste o retângulo)<br />
-          Shift+clique — soma à seleção (blocos e linhas) · Ctrl+A — todos<br />
-          Selecionar em área também pega as linhas tocadas<br />
-          Linha selecionada: Del desliga · arraste as bolinhas para religar<br />
-          Botão 🔗 do bloco: arraste até outro bloco para ligar<br />
-          F12 — tela cheia (Esc sai)<br />
-            Arrastar move só o bloco (as linhas se esticam) · Alt+arrastar leva o ramo<br />
-            Soltar um bloco sobre outro liga-o a ele<br />
-          Bloco selecionado: arraste as alças (esquerda/direita) para redimensionar · vários selecionados: redimensiona todos
-          </div>
         </aside>
         <div className="world" style={{ transform: `translate(${view.x}px,${view.y}px) scale(${view.s})` }}>
           <svg className="edges"><g>
@@ -1081,6 +1088,51 @@ export default function MindMap({ user, current, initialData }) {
         </div>
         {!readOnly && <AiAssistant api={aiApi} storageKey={`mm:ai:${current.uuid}`} panelOpen={panel} onExpandedChange={onChatExpanded} />}
       </main>
+      {projDlg?.kind === 'edit' && (
+        <div className="modal-bg ui" onPointerDown={e => e.target === e.currentTarget && setProjDlg(null)}>
+          <form className="modal proj-modal" role="dialog" aria-modal="true" aria-label="Editar projeto" onSubmit={e => { e.preventDefault(); saveProject(); }}
+            onKeyDown={e => { if (e.key === 'Escape') setProjDlg(null); e.stopPropagation(); }}>
+            <h3>Editar projeto</h3>
+            <label>Nome<input autoFocus maxLength={120} value={projDlg.name} onChange={e => setProjDlg({ ...projDlg, name: e.target.value })} /></label>
+            <label>Descrição<textarea rows={5} maxLength={1000} placeholder="Sobre o que é este projeto? (opcional)" value={projDlg.descricao} onChange={e => setProjDlg({ ...projDlg, descricao: e.target.value })} /></label>
+            <div className="modal-actions">
+              <span className="msg" style={projDlg.err ? { color: '#b3402a' } : undefined}>{projDlg.err || `${projDlg.descricao.length}/1000`}</span>
+              <button type="button" onClick={() => setProjDlg(null)}>Cancelar</button>
+              <button type="submit" className="primary" disabled={projDlg.busy}>{projDlg.busy ? 'Salvando…' : 'Salvar'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+      {projDlg?.kind === 'delete' && (
+        <div className="modal-bg ui" onPointerDown={e => e.target === e.currentTarget && setProjDlg(null)}>
+          <div className="modal proj-modal" role="alertdialog" aria-modal="true" aria-label="Excluir projeto" onKeyDown={e => { if (e.key === 'Escape') setProjDlg(null); e.stopPropagation(); }}>
+            <h3>Excluir projeto?</h3>
+            <p className="warn">Você vai excluir <b>“{projDlg.p.name}”</b> e <b>todo o seu mapa</b>. Isso não pode ser desfeito.</p>
+            <div className="modal-actions">
+              <button autoFocus onClick={() => setProjDlg(null)}>Cancelar</button>
+              <button className="danger" onClick={() => deleteProject(projDlg.p)}>Excluir</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {helpOpen && (
+        <div className="modal-bg ui" onPointerDown={e => e.target === e.currentTarget && setHelpOpen(false)}>
+          <div className="modal help-modal" role="dialog" aria-modal="true" aria-label="Atalhos e ajuda">
+            <h3>Atalhos e ajuda</h3>
+            <div className="help-grid">
+              {HELP.map(g => (
+                <section key={g.t}>
+                  <h4>{g.t}</h4>
+                  <dl>{g.i.map(([k, d]) => <div key={k + d}><dt>{k}</dt><dd>{d}</dd></div>)}</dl>
+                </section>
+              ))}
+            </div>
+            <div className="modal-actions"><button className="primary" onClick={() => setHelpOpen(false)}>Fechar</button></div>
+          </div>
+        </div>
+      )}
+
       {dlg && (
         <div className="modal-bg ui" onPointerDown={e => e.target === e.currentTarget && setDlg(null)}>
           <div className="modal">

@@ -404,3 +404,27 @@ button { font: inherit; cursor: pointer; border: 0; background: none; color: inh
 .node .rz.l { right: auto; left: -6px; }
 /* chat expandido: a caixa de digitação fica 100% mais alta */
 .ai-dock.wide .ai-inrow textarea { min-height: 112px; }
+
+/* ajuda / atalhos em modal */
+.side-h { display: flex; align-items: center; justify-content: space-between; }
+.side-btns { display: inline-flex; gap: 4px; align-items: center; }
+.help-btn { font-weight: 700; font-size: 13px; border: 1.5px solid currentColor; border-radius: 50%; width: 22px; height: 22px; padding: 0; line-height: 1; }
+.modal.help-modal { width: min(920px, 94vw); max-height: 90vh; overflow: auto; }
+.help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px 28px; }
+.help-grid h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #8a7fb0; }
+.help-grid dl { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.help-grid dl > div { display: grid; grid-template-columns: 150px 1fr; gap: 10px; font-size: 13.5px; line-height: 1.4; }
+.help-grid dt { font-weight: 600; color: #333; }
+.help-grid dd { margin: 0; color: #666; }
+
+/* editar / excluir projeto */
+.side li .pname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side li .pacts { display: inline-flex; gap: 2px; flex: none; }
+.side li.on .icon.sm { opacity: .75; }
+.side li .icon.sm:hover { opacity: 1; background: #0001; }
+.side li .icon.sm.del:hover { color: #c0392b; }
+.modal.proj-modal { width: min(480px, 94vw); }
+.proj-modal label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #555; font-weight: 600; }
+.proj-modal input, .proj-modal textarea { font: inherit; font-weight: 400; font-size: 14px; color: #222; border: 1px solid #ddd; border-radius: 8px; padding: 8px 10px; outline: none; height: auto; resize: vertical; }
+.proj-modal input:focus, .proj-modal textarea:focus { border-color: #7c4dff; }
+.modal-actions .danger { background: #d64545; color: #fff; }
