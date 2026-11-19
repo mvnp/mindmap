@@ -1,5 +1,6 @@
 import { getProject, renameProject, updateProject, deleteProject, saveView, ownsProject, canEditProject } from '@/lib/db';
 import { withAuth } from '@/lib/auth';
+import { removeProjectFiles } from '@/lib/conteudo';
 export const dynamic = 'force-dynamic';
 
 const notFound = () => Response.json({ error: 'não encontrado' }, { status: 404 });
@@ -27,6 +28,6 @@ export const PATCH = withAuth(async (req, { params }, user) => {
 export const DELETE = withAuth(async (_req, { params }, user) => {
   const id = Number((await params).id);
   if (!ownsProject(user.id, id)) return notFound();
-  deleteProject(id);
+  deleteProject(id); removeProjectFiles(id);
   return Response.json({ ok: true });
 });

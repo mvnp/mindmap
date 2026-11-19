@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import DbViewer from './DbViewer';
 import ShareModal from './ShareModal';
+import { ContentEditor, ContentViewer } from './ContentModal';
 import AiAssistant from './AiAssistant';
 import { makeExecutor, describeMap } from './ai/executor';
 import { renderShot } from './ai/screenshot';
@@ -86,6 +87,13 @@ export default function MindMap({ user, current, initialData }) {
   const undo = useRef([]); const redo = useRef([]);
   const pendingLayout = useRef(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  // conteúdo por bloco (título, texto, arquivos): resumo para os selos + modais de edição/visualização
+  const [contents, setContents] = useState({});          // node_id → { titulo, arquivos }
+  const [ctDlg, setCtDlg] = useState(null);              // { kind: 'edit' | 'view', nid }
+  const loadContents = useCallback(async id => {
+    try { const l = await getJson(`/api/projects/${id}/conteudo`); setContents(Object.fromEntries(l.map(c => [c.node_id, c]))); } catch {}
+  }, []);
+  useEffect(() => { setContents({}); loadContents(current.id); }, [current.id, loadContents]);
   useEffect(() => { if (!helpOpen) return; const k = e => { if (e.key === 'Escape') setHelpOpen(false); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [helpOpen]);
   const pendingFit = useRef(false);
   const pushPending = useRef(false);           // após redimensionar: reajustar o espaço entre os blocos assim que forem medidos
@@ -267,7 +275,7 @@ export default function MindMap({ user, current, initialData }) {
   useEffect(() => {
     const el = stage.current; if (!el) return;
     const onWheel = e => {
-      if (e.target.closest?.('.side, .rpanel, .ai-dock')) return;   // rolagem dos painéis não dá zoom no mapa
+      if (e.target.closest?.('.side, .rpanel, .ai-dock, .modal-bg')) return;   // rolagem dos painéis não dá zoom no mapa
       e.preventDefault();
       const v = viewRef.current, r = el.getBoundingClientRect();
       const s = Math.min(3, Math.max(0.15, v.s * Math.exp(-e.deltaY * 0.0015)));
@@ -947,6 +955,8 @@ export default function MindMap({ user, current, initialData }) {
                   <span key={sd} className={`rz ${sd}`} title={`Arraste para redimensionar${msel.length > 1 ? ' todos os selecionados' : ''} · duplo clique = largura automática`}
                     onPointerDown={e => onResizeDown(e, n, sd)} onDoubleClick={e => { e.stopPropagation(); resetWidth(n.id); }} />
                 ))}
+                {contents[n.id] && <button className="ct-badge" title={`Ver conteúdo${contents[n.id].titulo ? ': ' + contents[n.id].titulo : ''}`} onPointerDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}
+                  onClick={e => { e.stopPropagation(); setCtDlg({ kind: 'view', nid: n.id }); }}>📝{contents[n.id].arquivos > 0 && <small>{contents[n.id].arquivos}</small>}</button>}
                 {n.collapsed && nk > 0 && <button className="badge" style={{ background: color }} onClick={() => toggleCollapse(n.id)}>+{descendants(nodes, n.id).size - 1}</button>}
               </div>
             );
@@ -1010,6 +1020,7 @@ export default function MindMap({ user, current, initialData }) {
             <span className="sep" />
             <button title="Adicionar filho (Tab)" onClick={() => addChild(sn.id)}>＋</button>
             <button title="Ligar: arraste daqui até outro bloco; ele passa a sair deste" onPointerDown={e => startLinkFrom(e, sn)}>🔗</button>
+            <button title="Conteúdo do bloco: título, texto formatado e arquivos" className={contents[sn.id] ? 'act' : ''} onClick={() => setCtDlg({ kind: 'edit', nid: sn.id })}>📝</button>
             {kidsOf(nodes, sn.id).length > 0 && <button title="Recolher/expandir (Espaço)" onClick={() => toggleCollapse(sn.id)}>{sn.collapsed ? '⊞' : '⊟'}</button>}
             {(sn.parent || topCount > 1) && <button title="Excluir (Del)" onClick={() => remove(sn.id)}>🗑</button>}
             {palOpen && (
@@ -1088,6 +1099,16 @@ export default function MindMap({ user, current, initialData }) {
         </div>
         {!readOnly && <AiAssistant api={aiApi} storageKey={`mm:ai:${current.uuid}`} panelOpen={panel} onExpandedChange={onChatExpanded} />}
       </main>
+      {ctDlg && (() => {
+        const nd = nodes.find(m => m.id === ctDlg.nid); if (!nd) return null;
+        const path = []; for (let c = nd, k = 0; c && k < 50; c = nodes.find(m => m.id === c.parent), k++) path.unshift(c.text || '…');
+        const node = { id: nd.id, text: nd.text, path: path.join(' › ') }, project = { id: current.id, uuid: current.uuid };
+        return ctDlg.kind === 'edit'
+          ? <ContentEditor project={project} node={node} onClose={() => setCtDlg(null)}
+              onSaved={d => { loadContents(current.id); setCtDlg(d ? { kind: 'view', nid: nd.id } : null); }} />
+          : <ContentViewer project={project} node={node} canEdit={!readOnly} onEdit={() => setCtDlg({ kind: 'edit', nid: nd.id })} onClose={() => setCtDlg(null)} />;
+      })()}
+
       {projDlg?.kind === 'edit' && (
         <div className="modal-bg ui" onPointerDown={e => e.target === e.currentTarget && setProjDlg(null)}>
           <form className="modal proj-modal" role="dialog" aria-modal="true" aria-label="Editar projeto" onSubmit={e => { e.preventDefault(); saveProject(); }}

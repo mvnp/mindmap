@@ -97,6 +97,14 @@ O botão **✦ IA** (canto inferior direito) abre um chat com a Claude, que **v�
 - **Consumo registrado:** a tabela `ai_usage` guarda **um registro por prompt** (as várias chamadas à API de um mesmo prompt são somadas e `updated_at` avança a cada chamada). Colunas: `id`, `run_id`, `user_id`, `project_id`, `prompt` (até 2000 caracteres), `model`, `effort`, `input_tokens` (**total** de entrada = novos + cache escrito + cache lido), `output_tokens`, `cache_write_tokens`, `cache_read_tokens`, `calls` (chamadas à API), `tool_calls` (ações no mapa), `status` (`em_andamento`, `concluido`, `parado`, `erro`, `limite`), `error`, `cost_usd` (**estimativa**; preços em `lib/ai.js`), `created_at`, `updated_at`. Tokens de chamadas interrompidas ou com erro de conexão também entram. Cada usuário vê o próprio consumo (24 h, 30 dias e últimos prompts) no ⚙ Setup do chat; o master vê tudo em **Banco de dados**.
 - **Servidor:** defina `AI_ENC_SECRET` (qualquer texto longo e aleatório) no `.env` para a chave de criptografia ficar **fora do banco**. Sem ele, um segredo aleatório é gerado e guardado na tabela `app_secrets` (funciona, mas protege menos). Atrás do nginx, o streaming usa o cabeçalho `X-Accel-Buffering: no`; se houver outro proxy, desative o buffer para `/api/ai/chat`.
 
+## Conteúdo de cada bloco
+
+Selecione um bloco e clique em **📝** na barra dele para abrir o modal de **conteúdo**: título, texto formatado (negrito, itálico, sublinhado, subtítulo, listas) e arquivos (**textos de qualquer extensão, imagens, PDFs e áudios**, vários de uma vez, até 25 MB cada e 20 por bloco). O botão **✦ IA** lê o que você escreveu (mais o caminho do bloco no mapa) e **propõe** um texto, acrescentado ao final do rascunho; **↶ Desfazer IA** volta ao anterior. Ao **Salvar**, abre um segundo modal que mostra tudo organizado: título, conteúdo e arquivos (galeria de imagens, player de áudio, PDFs, prévia de textos). Blocos com conteúdo ganham um selo 📝 que abre essa visualização. Quem só visualiza o projeto (público) vê o conteúdo, mas não edita.
+
+- **Onde ficam os arquivos:** em disco, dentro do volume de dados: `<pasta do banco>/uploads/<projeto>/<conteúdo>/<nome aleatório>.<ext>` (`/data/uploads` no Docker; mude com `MINDMAP_UPLOADS`). O caminho relativo é gravado em `conteudo_arquivos.caminho`; o texto e o título ficam em `conteudos` (um por bloco). Os arquivos só são servidos pela rota autenticada, com `nosniff` e `sandbox`; o texto formatado é higienizado (DOMPurify) ao salvar e ao exibir.
+- **Backup:** copie também `/data/uploads` junto com `mindmap.db`. Excluir o projeto apaga os arquivos dele.
+- **Nginx:** para enviar arquivos grandes, aumente `client_max_body_size` (ex.: `client_max_body_size 120m;`). O app aceita até 100 MB por envio.
+
 ## API
 
 | Método e rota | Função |
@@ -110,6 +118,8 @@ O botão **✦ IA** (canto inferior direito) abre um chat com a Claude, que **v�
 | `PUT /api/projects/:id/nodes` | substituir o mapa inteiro (snapshot) |
 | `DELETE /api/projects/:id/nodes/:nid` | excluir nó e seu ramo |
 | `POST /api/projects/:id/import` | importar mapa (só em projeto zerado) |
+| `GET /api/projects/:id/conteudo` · `GET/PUT/DELETE …/conteudo/:bloco` · `GET …/conteudo/:bloco/arquivo/:id` | conteúdo do bloco (PUT é multipart: `titulo`, `corpo`, `remover`, `arquivos`) e download dos arquivos |
+| `POST /api/ai/conteudo` | (IA) propõe o texto do conteúdo de um bloco |
 | `GET/PUT/DELETE /api/ai/settings` | (IA) preferências e chave da API do usuário (a chave nunca é devolvida) |
 | `POST /api/ai/test` | (IA) testa a chave e o modelo salvos |
 | `POST /api/ai/chat` | (IA) um passo do agente, em streaming (SSE) |
