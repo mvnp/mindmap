@@ -2,10 +2,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import DbViewer from './DbViewer';
 import ShareModal from './ShareModal';
+import AiAssistant from './AiAssistant';
+import { makeExecutor, describeMap } from './ai/executor';
+import { renderShot } from './ai/screenshot';
+import { PALETTE, COLORS, GX, GAP, uid, kidsOf, descendants, topOf, visibleSet, effColor, layoutAll, edgeGeom, edgeHitsRect, placeChild, resolveOverlaps, branchBottom as cBranchBottom } from '@/lib/mm-core';
 
-const PALETTE = ['#ff7b7b', '#ffb454', '#e8c53a', '#3fbf8f', '#5b8def', '#a77bf3', '#555555'];
-const COLORS = [...PALETTE, '#ffffff', '#222222'];
-const GX = 70, GAP = 14;
 
 // linha de escolha de cor: paleta + cor livre + voltar ao padrão
 function ColorRow({ label, value, onPick, onReset }) {
@@ -18,98 +19,6 @@ function ColorRow({ label, value, onPick, onReset }) {
       <button className="rst" title="Voltar ao padrão" onClick={onReset}>↺</button>
     </div>
   );
-}
-const uid = () => Math.random().toString(36).slice(2, 10);
-
-/* ---------- helpers puros ---------- */
-const kidsOf = (nodes, id) => nodes.filter(n => n.parent === id);
-function descendants(nodes, id) {
-  const out = new Set([id]);
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const n of nodes) if (n.parent && out.has(n.parent) && !out.has(n.id)) { out.add(n.id); grew = true; }
-  }
-  return out;
-}
-// topo da árvore a que o bloco pertence (blocos sem pai são topos: o principal e os que tiveram a linha desligada)
-function topOf(nodes, id) {
-  let c = nodes.find(n => n.id === id), hops = 0;
-  while (c?.parent && hops++ < nodes.length) { const p = c.parent; c = nodes.find(n => n.id === p); }
-  return c;
-}
-function visibleSet(nodes) {
-  const vis = new Set();
-  const walk = id => {
-    vis.add(id);
-    const n = nodes.find(m => m.id === id);
-    if (n && !n.collapsed) kidsOf(nodes, id).forEach(c => walk(c.id));
-  };
-  nodes.filter(n => !n.parent).forEach(r => walk(r.id));
-  return vis;
-}
-function effColor(nodes, n) {
-  let cur = n;
-  while (cur) { if (cur.color) return cur.color; const pid = cur.parent; cur = nodes.find(m => m.id === pid); }
-  return '#ff7b7b';
-}
-function layoutAll(nodes, sizes) {
-  const tops = nodes.filter(n => !n.parent);
-  if (!tops.length) return nodes;
-  const W = id => sizes[id]?.w || 100, H = id => sizes[id]?.h || 30;
-  const memo = {};
-  const sub = id => {
-    if (memo[id] != null) return memo[id];
-    const n = nodes.find(m => m.id === id);
-    const ks = n.collapsed ? [] : kidsOf(nodes, id);
-    const tot = ks.reduce((s, c) => s + sub(c.id), 0) + GAP * Math.max(0, ks.length - 1);
-    return (memo[id] = Math.max(H(id), tot));
-  };
-  const pos = new Map();
-  const place = (list, edgeX, cy, dir) => {
-    const total = list.reduce((s, c) => s + sub(c.id), 0) + GAP * Math.max(0, list.length - 1);
-    let y = cy - total / 2;
-    for (const c of list) {
-      const sh = sub(c.id), ccy = y + sh / 2;
-      const x = dir > 0 ? edgeX + GX : edgeX - GX - W(c.id);
-      pos.set(c.id, { x, y: ccy - H(c.id) / 2 });
-      if (!c.collapsed) place(kidsOf(nodes, c.id), dir > 0 ? x + W(c.id) : x, ccy, dir);
-      y += sh + GAP;
-    }
-  };
-  for (const root of tops) {   // cada árvore independente é organizada em torno do seu próprio topo
-    const rx = root.x ?? 0, ry = root.y ?? 0, cy = ry + H(root.id) / 2;
-    pos.set(root.id, { x: rx, y: ry });
-    const top = root.collapsed ? [] : kidsOf(nodes, root.id);
-    const cut = Math.ceil(top.length / 2);
-    place(top.slice(0, cut), rx + W(root.id), cy, 1);
-    place(top.slice(cut), rx, cy, -1);
-  }
-  return nodes.map(n => (pos.has(n.id) ? { ...n, ...pos.get(n.id) } : n));
-}
-
-function edgeGeom(nodes, sizes, vis) {
-  const out = [];
-  for (const n of nodes) {
-    if (!n.parent || !vis.has(n.id) || n.x == null) continue;
-    const p = nodes.find(m => m.id === n.parent), a = sizes[n.parent], b = sizes[n.id];
-    if (!p || !a || !b || p.x == null) continue;
-    const right = n.x + b.w / 2 >= p.x + a.w / 2;
-    const x1 = right ? p.x + a.w : p.x, y1 = p.y + a.h / 2;
-    const x2 = right ? n.x : n.x + b.w, y2 = n.y + b.h / 2, mx = (x1 + x2) / 2;
-    out.push({ id: n.id, d: `M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`, c: n.lc || effColor(nodes, n), x1, y1, x2, y2, mx, my: (y1 + y2) / 2 });
-  }
-  return out;
-}
-// a curva toca o retângulo? (amostragem da bézier)
-function edgeHitsRect(e, rx0, ry0, rx1, ry1) {
-  for (let i = 0; i <= 24; i++) {
-    const t = i / 24, u = 1 - t;
-    const x = u * u * u * e.x1 + 3 * u * u * t * e.mx + 3 * u * t * t * e.mx + t * t * t * e.x2;
-    const y = u * u * u * e.y1 + 3 * u * u * t * e.y1 + 3 * u * t * t * e.y2 + t * t * t * e.y2;
-    if (x >= rx0 && x <= rx1 && y >= ry0 && y <= ry1) return true;
-  }
-  return false;
 }
 
 // GET JSON; sessão expirada (401) volta ao login
@@ -169,6 +78,9 @@ export default function MindMap({ user, current, initialData }) {
   const undo = useRef([]); const redo = useRef([]);
   const pendingLayout = useRef(false);
   const pendingFit = useRef(false);
+  const pushPending = useRef(false);           // após redimensionar: reajustar o espaço entre os blocos assim que forem medidos
+  const syncAfterPush = useRef(false);         // ...e, no fim do arrasto, salvar já com as posições reajustadas
+  const resizeBase = useRef(null);             // posições de antes do arrasto (id → {x,y,group}): estreitar e alargar de novo devolve cada bloco ao lugar
   const saveTimer = useRef(null);
   const stage = useRef(null);
   const nodeEls = useRef({});
@@ -325,6 +237,19 @@ export default function MindMap({ user, current, initialData }) {
       nodesRef.current = laid; setNodes(laid); sync();
       return;
     }
+    if (pushPending.current) {
+      pushPending.current = false;
+      const base = resizeBase.current;
+      // a posição é função da largura: parte do layout de ANTES do arrasto (só os redimensionados mudam de largura/x) e empurra o necessário
+      const src = base ? nodesRef.current.map(m => {
+        const b = base.get(m.id);
+        return b ? { ...m, x: b.group ? m.x : b.x, y: b.y } : m;
+      }) : nodesRef.current;
+      const next = resolveOverlaps(src, sizesRef.current);
+      const cur = nodesRef.current;
+      if (next.some((m, i) => m.x !== cur[i].x || m.y !== cur[i].y)) { nodesRef.current = next; setNodes(next); }
+      if (syncAfterPush.current) { syncAfterPush.current = false; resizeBase.current = null; sync(); }
+    }
     if (pendingFit.current) { pendingFit.current = false; fit(); }
   });
 
@@ -332,7 +257,7 @@ export default function MindMap({ user, current, initialData }) {
   useEffect(() => {
     const el = stage.current; if (!el) return;
     const onWheel = e => {
-      if (e.target.closest?.('.side, .rpanel')) return;   // rolagem dos painéis não dá zoom no mapa
+      if (e.target.closest?.('.side, .rpanel, .ai-dock')) return;   // rolagem dos painéis não dá zoom no mapa
       e.preventDefault();
       const v = viewRef.current, r = el.getBoundingClientRect();
       const s = Math.min(3, Math.max(0.15, v.s * Math.exp(-e.deltaY * 0.0015)));
@@ -491,61 +416,49 @@ export default function MindMap({ user, current, initialData }) {
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   };
 
-  /* ----- redimensionar bloco (largura); o texto quebra linha dentro dele ----- */
-  const onResizeDown = (e, n) => {
+  /* ----- redimensionar (largura): alças nos DOIS lados · com vários blocos selecionados redimensiona todos para a mesma largura ----- */
+  // side 'r' = alça da direita (a borda esquerda fica parada) · 'l' = alça da esquerda (a borda direita fica parada).
+  // O texto quebra linha dentro do bloco; a altura muda, e o espaço entre os blocos é recalculado na hora (resolveOverlaps).
+  const groupOf = id => (mselRef.current.length > 1 && mselRef.current.includes(id) ? mselRef.current : [id]);
+  const onResizeDown = (e, n, side = 'r') => {
     e.stopPropagation(); e.preventDefault();
-    const sx = e.clientX, w0 = sizesRef.current[n.id]?.w || n.w || 100;
+    const ids = groupOf(n.id), sz = sizesRef.current;
+    const w0 = sz[n.id]?.w || n.w || 100, sx = e.clientX;
+    const orig = new Map(nodesRef.current.filter(m => ids.includes(m.id)).map(m => [m.id, { x: m.x, r: m.x + (sz[m.id]?.w || m.w || 100) }]));
     let moved = false;
     const move = ev => {
-      if (!moved) { moved = true; undo.current.push(nodesRef.current); redo.current = []; }
-      const w = Math.max(60, Math.round(w0 + (ev.clientX - sx) / viewRef.current.s));
-      const next = nodesRef.current.map(m => (m.id === n.id ? { ...m, w } : m));
+      if (!moved) {
+        moved = true; undo.current.push(nodesRef.current); redo.current = [];
+        resizeBase.current = new Map(nodesRef.current.map(m => [m.id, { x: m.x, y: m.y, group: ids.includes(m.id) }]));
+      }
+      const dw = (side === 'r' ? ev.clientX - sx : sx - ev.clientX) / viewRef.current.s;
+      const w = Math.max(60, Math.round(w0 + dw));
+      const next = nodesRef.current.map(m => (orig.has(m.id) ? { ...m, w, x: side === 'r' ? orig.get(m.id).x : orig.get(m.id).r - w } : m));
       nodesRef.current = next; setNodes(next);
+      pushPending.current = true; bump(v => v + 1);
     };
     const up = () => {
       window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
-      if (moved) { sync(); bump(v => v + 1); }
+      if (moved) { pushPending.current = true; syncAfterPush.current = true; bump(v => v + 1); }
     };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+  // duplo clique numa alça: volta à largura automática (em todos os selecionados)
+  const resetWidth = id => {
+    const ids = groupOf(id);
+    resizeBase.current = null; pushPending.current = true; syncAfterPush.current = true;
+    mutate(ns => ns.map(m => (ids.includes(m.id) ? { ...m, w: null } : m)));
   };
 
   /* ----- ações ----- */
   const newNode = (parent, extra) => ({ id: uid(), parent, text: 'Novo tópico', x: 0, y: 0, color: null, size: null, bold: false, collapsed: false, w: null, bg: null, fg: null, lc: null, ...extra });
 
-  // base inferior (em coordenadas do mundo) do ramo visível de um nó — para não sobrepor
-  const branchBottom = (ns, id) => {
-    const vis = visibleSet(ns); let bot = -Infinity;
-    for (const m of ns) if (vis.has(m.id) && descendants(ns, id).has(m.id) && m.y != null)
-      bot = Math.max(bot, m.y + (sizesRef.current[m.id]?.h || 30));
-    return bot;
-  };
-  const sideOf = (ns, root, n) => {
-    const rc = root.x + (sizesRef.current[root.id]?.w || 100) / 2;
-    return n.x + (sizesRef.current[n.id]?.w || 100) / 2 >= rc ? 1 : -1;
-  };
+  const branchBottom = (ns, id) => cBranchBottom(ns, id, sizesRef.current);
 
   // só o novo nó é posicionado; nenhum outro nó se move
   const addChild = pId => {
-    const ns = nodesRef.current, parent = ns.find(n => n.id === pId); if (!parent) return;
-    const root = topOf(ns, pId);
-    const sz = sizesRef.current[pId] || { w: 100, h: 30 };
-    const sibs = kidsOf(ns, pId);
-    let side;
-    if (pId !== root.id) {
-      let t = parent;
-      while (t.parent !== root.id) { const pp = t.parent; t = ns.find(m => m.id === pp); }
-      side = sideOf(ns, root, t);
-    } else {
-      const right = sibs.filter(c => sideOf(ns, root, c) > 0).length;
-      side = right <= sibs.length - right ? 1 : -1;
-    }
-    const same = sibs.filter(c => pId !== root.id || sideOf(ns, root, c) === side);
-    const last = same[same.length - 1];
-    const node = newNode(pId, {
-      x: side > 0 ? parent.x + sz.w + GX : parent.x - GX - 110,
-      y: last ? branchBottom(ns, last.id) + GAP : parent.y,
-      color: pId === root.id ? PALETTE[sibs.length % PALETTE.length] : null,
-    });
+    const ns = nodesRef.current; if (!ns.some(n => n.id === pId)) return;
+    const node = newNode(pId, placeChild(ns, pId, sizesRef.current));
     mutate(list => [...list.map(n => (n.id === pId ? { ...n, collapsed: false } : n)), node]);
     setSel(node.id); setEditing(node.id);
   };
@@ -892,6 +805,58 @@ export default function MindMap({ user, current, initialData }) {
     ? { left: view.x + (sn.x + sizes[sn.id].w / 2) * view.s, top: view.y + sn.y * view.s - 54 } : null;
   const curName = projects.find(p => p.id === pid)?.name || current.name;
 
+  /* ----- assistente de IA: ponte entre o chat/executor e o estado do editor ----- */
+  const [aiCursor, setAiCursor] = useState({ x: 0, y: 0, vis: false, down: false });   // cursor animado (coordenadas do palco)
+  const [aiFx, setAiFx] = useState({});                                                  // efeitos temporários por bloco: new | hl | del
+  const chatOpenRef = useRef(false);
+  const onChatExpanded = useCallback(v => { chatOpenRef.current = v; }, []);
+  const aiLive = useRef({}); aiLive.current = { applySel, curName, tool, panel, sel, msel };
+  const aiBridge = useRef(null);
+  if (!aiBridge.current) {
+    const box = () => { const r = stage.current.getBoundingClientRect(); return { w: r.width, h: r.height }; };
+    aiBridge.current = {
+      readOnly, nodesRef, sizesRef, viewRef,
+      stageEl: () => stage.current,
+      stageBox: box,
+      // área da tela que não está coberta por painéis (menu lateral, funcionalidades, chat)
+      free: () => { const b = box(); return { l: 270, t: 84, r: b.w - 30 - (aiLive.current.panel ? 350 : 0) - (chatOpenRef.current ? 400 : 0), b: b.h - 70 }; },
+      applyNodes: next => { nodesRef.current = next; setNodes(next); bump(v => v + 1); },
+      sync,
+      applyView: v => { viewRef.current = v; setView(v); },
+      saveView: () => scheduleSave(),
+      cursor: c => setAiCursor(p => ({ ...p, ...c })),
+      fx: (id, kind, ms) => {
+        setAiFx(f => ({ ...f, [id]: kind }));
+        setTimeout(() => setAiFx(f => { if (f[id] !== kind) return f; const { [id]: _, ...rest } = f; return rest; }), ms);
+      },
+      select: ids => aiLive.current.applySel(ids),
+      setLink: l => setLink(l),
+      selection: () => (aiLive.current.msel.length ? aiLive.current.msel : (aiLive.current.sel ? [aiLive.current.sel] : [])),
+      projectName: () => aiLive.current.curName,
+      toolName: () => ({ pan: 'mover a tela', select: 'selecionar', zoom: 'zoom' })[aiLive.current.tool] || 'mover a tela',
+      screenshot: full => renderShot({ nodes: nodesRef.current, sizes: sizesRef.current, view: viewRef.current, box: box(), selected: new Set(aiBridge.current.selection()), full }),
+    };
+    aiBridge.current.executor = makeExecutor(aiBridge.current);
+  }
+  const aiApi = useRef(null);
+  aiApi.current = {
+    readOnly,
+    context: () => describeMap(aiBridge.current),
+    screenshot: full => aiBridge.current.screenshot(full),
+    exec: (name, input, rt) => aiBridge.current.executor.exec(name, input, rt),
+    reset: () => aiBridge.current.executor.reset(),
+    // tudo o que a IA faz num pedido vira UM passo de desfazer
+    begin: () => {
+      undo.current.push(nodesRef.current); if (undo.current.length > 100) undo.current.shift(); redo.current = [];
+      const fr = aiBridge.current.free();   // o cursor entra a partir do centro da área livre
+      setAiCursor(c => (c.vis ? c : { ...c, x: (fr.l + fr.r) / 2, y: (fr.t + fr.b) / 2 }));
+    },
+    end: () => {
+      sync(); scheduleSave(); setLink(null);
+      setTimeout(() => setAiCursor(c => ({ ...c, vis: false, down: false })), 1500);
+    },
+  };
+
   return (
     <div className={`app${full ? ' full' : ''}${guides ? ' g' : ''}`} onContextMenu={onContextMenu}>
 
@@ -938,7 +903,7 @@ export default function MindMap({ user, current, initialData }) {
           F12 — tela cheia (Esc sai)<br />
             Arrastar move só o bloco (as linhas se esticam) · Alt+arrastar leva o ramo<br />
             Soltar um bloco sobre outro liga-o a ele<br />
-          Nó selecionado: arraste a alça direita para redimensionar
+          Bloco selecionado: arraste as alças (esquerda/direita) para redimensionar · vários selecionados: redimensiona todos
           </div>
         </aside>
         <div className="world" style={{ transform: `translate(${view.x}px,${view.y}px) scale(${view.s})` }}>
@@ -956,7 +921,7 @@ export default function MindMap({ user, current, initialData }) {
             const isEd = editing === n.id;
             return (
               <div key={n.id} data-id={n.id} ref={el => { if (el) nodeEls.current[n.id] = el; else delete nodeEls.current[n.id]; }}
-                className={`node${n.w ? ' fw' : ''}${isRoot ? ' root' : ''}${sel === n.id || msel.includes(n.id) ? ' sel' : ''}${dropT === n.id ? ' drop' : ''}`}
+                className={`node${n.w ? ' fw' : ''}${isRoot ? ' root' : ''}${sel === n.id || msel.includes(n.id) ? ' sel' : ''}${dropT === n.id ? ' drop' : ''}${aiFx[n.id] ? ' ai-' + aiFx[n.id] : ''}`}
                 style={{ left: n.x ?? 0, top: n.y ?? 0, visibility: n.x == null ? 'hidden' : 'visible', fontSize: defSize(n), fontWeight: n.bold || isRoot ? 700 : 400, ...(n.w ? { width: n.w } : {}), ...(isRoot || n.bg ? { background: n.bg || color } : {}), ...(n.fg ? { color: n.fg } : {}) }}
                 onPointerDown={e => onNodeDown(e, n)} onDoubleClick={e => { e.stopPropagation(); setSel(n.id); if (!readOnly) setEditing(n.id); }}>
                 <span key={isEd ? 'e' : 'v'} className="txt" ref={isEd ? editRef : null}
@@ -971,7 +936,10 @@ export default function MindMap({ user, current, initialData }) {
                   onInput={() => bump(v => v + 1)}>
                   {isEd ? null : n.text}
                 </span>
-                {sel === n.id && !isEd && !readOnly && <span className="rz" title="Arraste para redimensionar · duplo clique = linha inteira" onPointerDown={e => onResizeDown(e, n)} onDoubleClick={e => { e.stopPropagation(); patch(n.id, { w: null }); }} />}
+                {(sel === n.id || (msel.length > 1 && msel.includes(n.id))) && !isEd && !readOnly && ['l', 'r'].map(sd => (
+                  <span key={sd} className={`rz ${sd}`} title={`Arraste para redimensionar${msel.length > 1 ? ' todos os selecionados' : ''} · duplo clique = largura automática`}
+                    onPointerDown={e => onResizeDown(e, n, sd)} onDoubleClick={e => { e.stopPropagation(); resetWidth(n.id); }} />
+                ))}
                 {n.collapsed && nk > 0 && <button className="badge" style={{ background: color }} onClick={() => toggleCollapse(n.id)}>+{descendants(nodes, n.id).size - 1}</button>}
               </div>
             );
@@ -1108,6 +1076,10 @@ export default function MindMap({ user, current, initialData }) {
           <span>{Math.round(view.s * 100)}%</span>
           <button onClick={() => zoomBy(1.2)}>＋</button>
         </div>
+        <div className={`ai-cursor${aiCursor.vis ? ' vis' : ''}${aiCursor.down ? ' down' : ''}`} style={{ left: aiCursor.x, top: aiCursor.y }} aria-hidden>
+          <svg viewBox="0 0 24 24" width="26" height="26"><path d="M4 2l16 9-7 2-3 7z" fill="#7c4dff" stroke="#fff" strokeWidth="1.6" strokeLinejoin="round" /></svg><span>IA</span>
+        </div>
+        {!readOnly && <AiAssistant api={aiApi} storageKey={`mm:ai:${current.uuid}`} panelOpen={panel} onExpandedChange={onChatExpanded} />}
       </main>
       {dlg && (
         <div className="modal-bg ui" onPointerDown={e => e.target === e.currentTarget && setDlg(null)}>

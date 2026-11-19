@@ -82,7 +82,20 @@ A senha nunca fica no código nem no repositório. Em produção, defina `APP_UR
 | F12 | tela cheia da área de desenho (Esc sai) |
 | Clique direito | menu (Padrão vertical) |
 
-Outros: arraste a tela para navegar e use a roda do mouse para zoom; arraste um bloco sobre outro para mudar o pai; arraste a alça direita de um bloco selecionado para redimensioná-lo (o texto quebra linha).
+Outros: arraste a tela para navegar e use a roda do mouse para zoom; arraste um bloco sobre outro para mudar o pai; arraste as alças **esquerda ou direita** de um bloco selecionado para redimensioná-lo (o texto quebra linha; a borda do lado oposto fica parada). Com **vários blocos selecionados**, arrastar a alça de um deles redimensiona todos para a mesma largura. O espaço entre os blocos é **recalculado na hora**: quem ficaria sobreposto é empurrado (o de baixo desce com o seu ramo; filho invadido pelo pai alargado se afasta), e arrastar de volta devolve cada bloco ao lugar. Duplo clique numa alça volta à largura automática. Tudo isso é um único passo de Ctrl+Z.
+
+## Assistente de IA (monta o mapa na sua frente)
+
+O botão **✦ IA** (canto inferior direito) abre um chat com a Claude, que **vê o mapa e edita direto na tela**: um cursor animado vai até os blocos, cria, digita, liga, move, recolore, organiza e enquadra a câmera.
+
+- **Setup (⚙):** sua chave da API da Anthropic, o modelo (Haiku 5.5, Sonnet 5.5, Opus 5.5 ou Fable 5.2), o nível de raciocínio e o **prompt** (instruções permanentes). A chave é guardada **criptografada (AES-256-GCM) no servidor**, é de uso pessoal e **nunca volta ao navegador** (só os 4 últimos caracteres).
+- **Controles:** ⏸ Pausar / ▶ Continuar (congela o trabalho no ponto exato), ■ Parar (cancela a resposta em andamento; o que já foi feito fica) e ▶ Retomar (continua de onde parou). Velocidade do cursor: Lento · Normal · Rápido · Instantâneo. O chat pode ser minimizado sem interromper o trabalho.
+- **Contexto:** a cada mensagem a IA recebe o estado completo do mapa (blocos, ids, hierarquia, posições, cores, seleção, área visível e zoom) e, se o 👁 estiver ligado, um **print da tela**. Também dá para **colar ou anexar imagens** (📎). Ela mesma pode chamar `ver_tela` para conferir o resultado.
+- **Desfazer:** tudo que a IA faz em um pedido é **um único passo** de Ctrl+Z.
+- **Ferramentas da IA:** `criar_bloco`, `editar_bloco`, `mover_bloco`, `ligar_bloco` (liga/desliga linhas), `excluir_bloco`, `organizar`, `enquadrar`, `selecionar`, `ver_tela`, `ler_mapa`. Definidas em `lib/ai-tools.js` e executadas no navegador por `components/ai/executor.js`.
+- **Custo:** cada pedido gasta tokens da **sua** conta Anthropic (cache automático do histórico). Há limite de 120 chamadas por 10 minutos por usuário.
+- **Consumo registrado:** a tabela `ai_usage` guarda **um registro por prompt** (as várias chamadas à API de um mesmo prompt são somadas e `updated_at` avança a cada chamada). Colunas: `id`, `run_id`, `user_id`, `project_id`, `prompt` (até 2000 caracteres), `model`, `effort`, `input_tokens` (**total** de entrada = novos + cache escrito + cache lido), `output_tokens`, `cache_write_tokens`, `cache_read_tokens`, `calls` (chamadas à API), `tool_calls` (ações no mapa), `status` (`em_andamento`, `concluido`, `parado`, `erro`, `limite`), `error`, `cost_usd` (**estimativa**; preços em `lib/ai.js`), `created_at`, `updated_at`. Tokens de chamadas interrompidas ou com erro de conexão também entram. Cada usuário vê o próprio consumo (24 h, 30 dias e últimos prompts) no ⚙ Setup do chat; o master vê tudo em **Banco de dados**.
+- **Servidor:** defina `AI_ENC_SECRET` (qualquer texto longo e aleatório) no `.env` para a chave de criptografia ficar **fora do banco**. Sem ele, um segredo aleatório é gerado e guardado na tabela `app_secrets` (funciona, mas protege menos). Atrás do nginx, o streaming usa o cabeçalho `X-Accel-Buffering: no`; se houver outro proxy, desative o buffer para `/api/ai/chat`.
 
 ## API
 
@@ -97,12 +110,19 @@ Outros: arraste a tela para navegar e use a roda do mouse para zoom; arraste um 
 | `PUT /api/projects/:id/nodes` | substituir o mapa inteiro (snapshot) |
 | `DELETE /api/projects/:id/nodes/:nid` | excluir nó e seu ramo |
 | `POST /api/projects/:id/import` | importar mapa (só em projeto zerado) |
+| `GET/PUT/DELETE /api/ai/settings` | (IA) preferências e chave da API do usuário (a chave nunca é devolvida) |
+| `POST /api/ai/test` | (IA) testa a chave e o modelo salvos |
+| `POST /api/ai/chat` | (IA) um passo do agente, em streaming (SSE) |
+| `GET /api/ai/usage` · `POST /api/ai/run-end` | (IA) consumo de tokens do usuário · aviso de como o prompt terminou |
 
 ## Estrutura
 
 ```
 app/            páginas e rotas de API (Next.js)
-components/     MindMap.jsx — editor (canvas, pan/zoom, seleção, menu)
+components/     MindMap.jsx — editor (canvas, pan/zoom, seleção, menu) · AiAssistant.jsx — chat e setup da IA
+components/ai/  agent.js (streaming e laço de ferramentas) · executor.js (ferramentas + cursor) · screenshot.js (print)
+lib/ai.js       IA: chave criptografada, preferências, cliente Anthropic · lib/ai-tools.js — ferramentas e prompt de sistema
+lib/mm-core.js  funções puras do mapa (layout, linhas, posicionamento)
 lib/db.js       SQLite: esquema, CRUD e validação
 Dockerfile, docker-compose.yml
 ```
