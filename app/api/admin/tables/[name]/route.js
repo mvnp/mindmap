@@ -6,7 +6,8 @@ export const GET = withAuth(async (req, { params }) => {
     const u = new URL(req.url);
     const limit = Math.min(500, Math.max(1, Number(u.searchParams.get('limit')) || 100));
     const offset = Math.max(0, Number(u.searchParams.get('offset')) || 0);
-    return Response.json(readTable((await params).name, limit, offset));
+    const around = Number(u.searchParams.get('around')) || 0;   // abre a página que contém este rowid (usado pelo assistente de IA)
+    return Response.json(readTable((await params).name, limit, offset, around));
   } catch (e) { return fail(e); }
 }, { master: true });
 

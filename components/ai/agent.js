@@ -45,8 +45,8 @@ export function repairHistory(messages) {
 // lê o SSE de um passo. Devolve { content, stop_reason, truncated, error }.
 // content = só os blocos COMPLETOS (um tool_use que não terminou jamais entra: a API exigiria o resultado dele).
 // truncated = o stream acabou antes do message_stop (timeout de proxy, conexão caiu, erro no meio): o que já chegou é aproveitado.
-async function streamTurn({ messages, run, signal, onText, onThinking, onToolBlock }) {
-  const r = await fetch('/api/ai/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages, run }), signal });
+async function streamTurn({ messages, run, scope, signal, onText, onThinking, onToolBlock }) {
+  const r = await fetch('/api/ai/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages, run, scope }), signal });
   if (r.status === 401) { window.location.href = '/login'; throw new Error('sessão expirada'); }
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `erro ${r.status}`);
 
@@ -135,7 +135,7 @@ export async function runAgent(h) {
       let turn;
       try {
         turn = await streamTurn({
-          messages, run: h.run, signal, onText: h.onText, onThinking: h.onThinking,
+          messages, run: h.run, scope: h.scope, signal, onText: h.onText, onThinking: h.onThinking,
           // cada ferramenta entra numa fila e roda na ordem, já durante o streaming
           onToolBlock: b => {
             const p = queue.then(async () => {

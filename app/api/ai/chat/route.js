@@ -1,6 +1,7 @@
 import { withAuth, fail } from '@/lib/auth';
 import { clientFor, friendlyError, aiRateLimit, recordUsage } from '@/lib/ai';
 import { TOOLS, systemPrompt } from '@/lib/ai-tools';
+import { DB_TOOLS, dbSystemPrompt } from '@/lib/ai-db';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
@@ -14,7 +15,9 @@ export const POST = withAuth(async (req, _ctx, user) => {
     aiRateLimit(user.id);
     const raw = await req.text();
     if (raw.length > MAX_BODY) return Response.json({ error: 'A conversa ficou grande demais. Limpe-a e tente de novo.' }, { status: 413 });
-    const { messages, run } = JSON.parse(raw);
+    const { messages, run, scope } = JSON.parse(raw);
+    const dbScope = scope === 'db';   // chat do banco de dados: só o master
+    if (dbScope && !user.master) return Response.json({ error: 'acesso restrito ao master' }, { status: 403 });
     if (!Array.isArray(messages) || !messages.length || messages.length > MAX_MESSAGES
       || !messages.every(m => m && (m.role === 'user' || m.role === 'assistant') && (typeof m.content === 'string' || Array.isArray(m.content)))) {
       return Response.json({ error: 'mensagens inválidas' }, { status: 400 });
@@ -41,8 +44,8 @@ export const POST = withAuth(async (req, _ctx, user) => {
       stream = await client.messages.create({
         model: settings.model,
         max_tokens: 32000,
-        system: systemPrompt(settings.prompt),
-        tools: TOOLS,
+        system: dbScope ? dbSystemPrompt(settings.prompt) : systemPrompt(settings.prompt),
+        tools: dbScope ? DB_TOOLS : TOOLS,
         messages,
         output_config: { effort: settings.effort },
         cache_control: { type: 'ephemeral' },   // cache automático do prefixo: a conversa só cresce, então os turnos seguintes ficam bem mais baratos

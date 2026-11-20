@@ -115,7 +115,10 @@ Chamadas: ${u.calls} · ações: ${u.tool_calls} · cache lido: ${fmt(u.cache_re
 
 /* ---------- chat ---------- */
 // api: ref para { readOnly, context(), screenshot(full), exec(name,input,rt), begin(), end(), reset() } (fornecido pelo MindMap)
-export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChange }) {
+export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChange, scope = 'map' }) {
+  const isDb = scope === 'db';                       // chat do banco de dados (master): mesmas regras, ferramentas e tela diferentes
+  const K = isDb ? 'mm:ai:db:' : 'mm:ai:';
+  const [undoable, setUndoable] = useState(false);   // a missão atual alterou o banco e ainda pode ser desfeita
   const [open, setOpen] = useState(false);
   const [wide, setWide] = useState(() => { try { return localStorage.getItem('mm:ai:wide') === '1'; } catch { return false; } });
   const toggleWide = () => setWide(w => { const v = !w; try { localStorage.setItem('mm:ai:wide', v ? '1' : '0'); } catch {} return v; });
@@ -153,14 +156,14 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
   useEffect(() => {
     fetch('/api/ai/settings').then(r => r.json()).then(setSettings).catch(() => {});
     try {
-      setOpen(localStorage.getItem('mm:ai:open') === '1');
+      setOpen(localStorage.getItem(K + 'open') === '1');
       setAutoShot(localStorage.getItem('mm:ai:shot') !== '0');
       const sp = localStorage.getItem('mm:ai:speed'); if (SPEEDS.some(s => s.id === sp)) setSpeed(sp);
       const d = JSON.parse(localStorage.getItem(storageKey) || 'null');
       if (d?.v === 1) { messages.current = sanitize(d.messages || []); repairHistory(messages.current); setLog(d.log || []); seq.current = (d.log?.at(-1)?.id || 0) + 1; }
     } catch {}
-  }, [storageKey]);
-  useEffect(() => { onExpandedChange?.(open); try { localStorage.setItem('mm:ai:open', open ? '1' : '0'); } catch {} }, [open, onExpandedChange]);
+  }, [storageKey, K]);
+  useEffect(() => { onExpandedChange?.(open); try { localStorage.setItem(K + 'open', open ? '1' : '0'); } catch {} }, [open, onExpandedChange, K]);
   useEffect(() => { try { localStorage.setItem('mm:ai:shot', autoShot ? '1' : '0'); localStorage.setItem('mm:ai:speed', speed); } catch {} }, [autoShot, speed]);
   // guarda a conversa (sem imagens) quando o chat fica parado
   useEffect(() => {
@@ -186,17 +189,17 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
   const send = async (text, resume = false) => {
     if (status !== 'idle' || !api.current || api.current.readOnly) return;
     if (!settings?.temChave) { setSetup(true); return; }
-    const t = text.trim() || (!resume && docs.length ? 'Monte o mapa mental a partir do conteúdo dos arquivos anexados.' : '');
+    const t = text.trim() || (!resume && docs.length ? (isDb ? 'Use o conteúdo dos arquivos anexados para executar a missão.' : 'Monte o mapa mental a partir do conteúdo dos arquivos anexados.') : '');
     if (!t && !resume) return;
 
     // conteúdo da mensagem: print da tela + anexos + estado do mapa + o pedido
     const blocks = []; let shotUrl = null;
-    if (autoShot) { try { const s = api.current.screenshot(false); blocks.push(imgBlock(s)); shotUrl = s.url; } catch (e) { console.error(e); } }
+    if (autoShot && !isDb) { try { const s = api.current.screenshot(false); blocks.push(imgBlock(s)); shotUrl = s.url; } catch (e) { console.error(e); } }
     for (const a of atts) blocks.push(imgBlock(a));
     for (const d of docs) blocks.push({ type: 'text', text: `<arquivo nome="${d.name.replace(/["<>\r\n]/g, '_')}">\n${d.text}\n</arquivo>` });
-    blocks.push({ type: 'text', text: `<estado_do_mapa>\n${api.current.context()}\n</estado_do_mapa>` });
+    blocks.push({ type: 'text', text: isDb ? `<estado_da_tela>\n${api.current.context()}\n</estado_da_tela>` : `<estado_do_mapa>\n${api.current.context()}\n</estado_do_mapa>` });
     blocks.push({ type: 'text', text: resume
-      ? `Continue de onde parou. O trabalho foi interrompido antes de terminar. Ações já executadas desde o meu pedido: ${acts.current.length ? acts.current.join(' | ') : 'nenhuma'}. O estado atual do mapa está acima; complete o que faltava do pedido original, sem refazer o que já existe.`
+      ? `Continue de onde parou. O trabalho foi interrompido antes de terminar. Ações já executadas desde o meu pedido: ${acts.current.length ? acts.current.join(' | ') : 'nenhuma'}. ${isDb ? 'Confira o estado atual do banco (consultar).' : 'O estado atual do mapa está acima;'} Complete o que faltava do pedido original, sem refazer o que já existe.`
       : t });
 
     messages.current = trimHistory(messages.current, 160);
@@ -205,18 +208,19 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
     else messages.current.push({ role: 'user', content: blocks });
 
     if (resume) push({ k: 'note', t: '▶ Retomando…' });
-    else { acts.current = []; runRef.current = { id: crypto.randomUUID(), prompt: t }; push({ k: 'user', t, imgs: [shotUrl && { url: shotUrl, label: 'tela' }, ...atts.map(a => ({ url: a.url, label: 'anexo' }))].filter(Boolean), files: docs.map(d => d.name) }); setInput(''); setAtts([]); setDocs([]); setAttMsg(''); api.current.begin(); }
+    else { acts.current = []; setUndoable(false); runRef.current = { id: crypto.randomUUID(), prompt: t }; push({ k: 'user', t, imgs: [shotUrl && { url: shotUrl, label: 'tela' }, ...atts.map(a => ({ url: a.url, label: 'anexo' }))].filter(Boolean), files: docs.map(d => d.name) }); setInput(''); setAtts([]); setDocs([]); setAttMsg(''); api.current.begin(); }
 
     stoppedRef.current = false; pausedRef.current = false;
     const ac = new AbortController(); abortRef.current = ac;
     setStatus('running'); setInterrupted(false); setThinking(false);
 
-    const rt = { gate, speed: () => SPEEDS.find(s => s.id === speedRef.current).m };
+    const rt = { run: runRef.current.id, gate, speed: () => SPEEDS.find(s => s.id === speedRef.current).m };
     const res = await runAgent({
+      scope: isDb ? 'db' : undefined,
       messages: messages.current, signal: ac.signal, gate, run: { id: runRef.current.id, project: storageKey.replace(/^mm:ai:/, ''), prompt: runRef.current.prompt },
       exec: (name, inp) => api.current.exec(name, inp, rt),
       onText: appendAi, onTextReset: closeAi, onThinking: setThinking,
-      onAction: (label, r) => { acts.current.push(label); push({ k: 'act', t: label, err: !!r.isError }); },
+      onAction: (label, r) => { if (r.undoable) setUndoable(true); acts.current.push(label); push({ k: 'act', t: label, err: !!r.isError }); },
       onNote: n => push({ k: 'note', t: n }),
     });
     closeAi(); setThinking(false); api.current.end();
@@ -227,6 +231,18 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
     if (res.status === 'stopped') { setInterrupted(true); push({ k: 'note', t: '■ Parado. Use ▶ Retomar para continuar de onde parou.' }); }
     else if (res.status === 'error') { setInterrupted(true); push({ k: 'err', t: res.error }); }
     else if (res.status === 'max_steps') { setInterrupted(true); push({ k: 'note', t: 'Cheguei ao limite de passos deste pedido. Use ▶ Retomar para continuar.' }); }
+  };
+
+  const undoMission = async () => {
+    if (status !== 'idle' || !runRef.current.id) return;
+    try {
+      const r = await fetch('/api/admin/ai/undo', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ run: runRef.current.id }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { push({ k: 'err', t: d.error || 'Não foi possível desfazer' }); return; }
+      setUndoable(false); push({ k: 'note', t: `↶ Missão desfeita (${d.desfeitas} linha(s)).` });
+      api.current?.afterUndo?.(d);
+      messages.current.push({ role: 'user', content: [{ type: 'text', text: '(O usuário desfez a missão anterior: as alterações feitas por você foram revertidas no banco.)' }] });
+    } catch { push({ k: 'err', t: 'Falha de conexão ao desfazer' }); }
   };
 
   const clearChat = () => {
@@ -268,6 +284,7 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
       {status === 'running' && <button className="ai-b" title="Pausa o trabalho exatamente onde está" onClick={pause}>⏸ Pausar</button>}
       {status === 'paused' && <button className="ai-b go" title="Continua do ponto em que pausou" onClick={unpause}>▶ Continuar</button>}
       {running && <button className="ai-b stop" title="Para tudo e cancela a resposta em andamento (o que já foi feito fica)" onClick={stop}>■ Parar</button>}
+      {!running && undoable && <button className="ai-b" title="Reverte tudo o que a IA alterou no banco neste pedido" onClick={undoMission}>↶ Desfazer missão</button>}
       {!running && interrupted && <button className="ai-b go" title="Continua o trabalho de onde parou" onClick={() => send('', true)}>▶ Retomar</button>}
     </>
   );
@@ -285,7 +302,7 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
         <section className={`ai-dock ui${panelOpen ? ' po' : ''}${wide ? ' wide' : ''}`} onPointerDown={e => e.stopPropagation()} onDragOver={e => e.preventDefault()} onDrop={onDrop}>
           <header className="ai-head">
             <span className={`ai-dot ${status}`} />
-            <b style={{ whiteSpace: 'nowrap' }}>Assistente IA</b>
+            <b style={{ whiteSpace: 'nowrap' }}>{isDb ? 'Assistente do banco' : 'Assistente IA'}</b>
             <span className="ai-sp" />
             <button className="ai-ic" title={wide ? 'Recolher o chat' : 'Expandir o chat (+50% para a esquerda, +25% para cima)'} onClick={toggleWide}>
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -300,9 +317,11 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
           <div className="ai-log">
             {!log.length && (
               <div className="ai-empty">
-                <p><b>Peça e eu monto o mapa na sua frente.</b> Eu vejo o mapa, a seleção e (se ativado) o print da tela.</p>
+                {isDb
+                  ? <p><b>Passe a missão e eu executo no banco, na sua frente.</b> Eu conheço todas as tabelas e colunas, abro a tabela e destaco as linhas. Cada missão pode ser desfeita.</p>
+                  : <p><b>Peça e eu monto o mapa na sua frente.</b> Eu vejo o mapa, a seleção e (se ativado) o print da tela.</p>}
                 {!settings?.temChave && settings && <button className="ai-cta" onClick={() => setSetup(true)}>⚙ Cadastrar chave da API</button>}
-                {['Monte um mapa mental sobre planejamento de marketing para uma clínica', 'Expanda o bloco selecionado em 5 subtópicos', 'Organize o mapa e enquadre tudo na tela'].map(s => (
+                {(isDb ? ['Crie 5 usuários não master', 'Quantos projetos cada usuário tem?', 'Mostre os convites pendentes'] : ['Monte um mapa mental sobre planejamento de marketing para uma clínica', 'Expanda o bloco selecionado em 5 subtópicos', 'Organize o mapa e enquadre tudo na tela']).map(s => (
                   <button key={s} className="ai-chip" onClick={() => setInput(s)}>{s}</button>
                 ))}
               </div>
@@ -325,7 +344,7 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
               <select className="ai-speed" title="Velocidade da animação do cursor" value={speed} onChange={e => setSpeed(e.target.value)}>
                 {SPEEDS.map(s => <option key={s.id} value={s.id}>{s.nome}</option>)}
               </select>
-              <button className={`ai-ic${autoShot ? ' on' : ''}`} title={autoShot ? 'A IA recebe um print da tela a cada mensagem (clique para desligar)' : 'Enviar print da tela com cada mensagem (desligado)'} onClick={() => setAutoShot(v => !v)}>👁</button>
+              {!isDb && <button className={`ai-ic${autoShot ? ' on' : ''}`} title={autoShot ? 'A IA recebe um print da tela a cada mensagem (clique para desligar)' : 'Enviar print da tela com cada mensagem (desligado)'} onClick={() => setAutoShot(v => !v)}>👁</button>}
               <button className="ai-ic" title="Anexar imagem ou arquivo de texto (qualquer extensão) — também dá para colar ou soltar aqui" disabled={running} onClick={() => fileIn.current?.click()}>📎</button>
               <input ref={fileIn} type="file" multiple hidden onChange={e => { addFiles([...e.target.files]); e.target.value = ''; }} />
             </div>
@@ -333,7 +352,7 @@ export default function AiAssistant({ api, storageKey, panelOpen, onExpandedChan
             {attMsg && <div className="ai-attmsg">{attMsg}</div>}
             {atts.length > 0 && <div className="ai-atts">{atts.map((a, i) => <span key={i}><img src={a.url} alt="" /><button title="Remover" onClick={() => setAtts(x => x.filter((_, j) => j !== i))}>×</button></span>)}</div>}
             <div className="ai-inrow">
-              <textarea rows={2} value={input} placeholder={running ? 'Trabalhando… use ■ Parar para interromper' : 'Peça algo ao mapa… (Enter envia · Shift+Enter quebra linha · cole imagens)'}
+              <textarea rows={2} value={input} placeholder={running ? 'Trabalhando… use ■ Parar para interromper' : (isDb ? 'Passe uma missão ao banco… (Enter envia · Shift+Enter quebra linha)' : 'Peça algo ao mapa… (Enter envia · Shift+Enter quebra linha · cole imagens)')}
                 onChange={e => setInput(e.target.value)} onPaste={onPaste} disabled={running}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(input); } e.stopPropagation(); }} />
               <div className="ai-side">

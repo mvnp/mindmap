@@ -106,6 +106,16 @@ O papel é **por projeto**, não por conta: a mesma pessoa pode ser **dona** de 
 - **Caixa de notificações (🔔 no painel):** convites pendentes para o e-mail da conta aparecem no sino da barra lateral, com **Aceitar** e **Recusar**, sem depender do e-mail (a caixa abre sozinha uma vez por sessão se houver convite). API: `GET /api/notificacoes` e `POST /api/notificacoes/:id` com `{ "acao": "aceitar" | "recusar" }`. O link do e-mail (`/convite?token=…`) continua funcionando.
 - A coluna global `users.readonly`, da versão anterior, foi **removida** (migração automática).
 
+## Assistente de IA do banco de dados (master)
+
+Dentro de **Banco de dados** (só o master) há um chat de IA igual ao dos mapas (mesma chave, modelo, velocidade, pausa/parar/retomar, anexos de texto e consumo em `ai_usage`), mas que **opera o banco**: você passa a missão ("crie 5 usuários não master", "troque a senha de fulano", "exclua os convites vencidos") e a tela abre a tabela, rola até as linhas e as destaca em tempo real.
+
+- **Sempre ciente do banco:** o esquema (tabelas, colunas, tipos, chaves, ON DELETE, contagem de linhas) vai no prompt de sistema **a cada passo**, então reflete o que a própria IA acabou de mudar.
+- **Ferramentas** (executadas no **servidor**, só para master): `ver_esquema`, `abrir_tabela`, `consultar` (filtros estruturados, sem SQL livre: sem injeção), `inserir_linhas`, `atualizar_linhas`, `excluir_linhas`. A IA **não altera o esquema** (nada de criar/apagar tabela ou coluna).
+- **Segurança:** colunas de hash/chave (`senha_hash`, `token_hash`, `api_key_enc`, `secret_value`) nunca são lidas; a tabela `app_secrets` é invisível e intocável; `sessions`, `auth_tokens` e `ai_settings` não recebem inserções; alterar/excluir **exige filtro** (máx. 200/100 linhas por chamada); cada chamada é **tudo ou nada** (transação); valem as mesmas regras do visualizador (último master, nova senha vira hash e derruba as sessões); ela não exclui o master que está conversando nem encerra a sessão dele. Usuários criados nascem **verificados e não master**, com o projeto inicial do cadastro normal; a IA informa as senhas geradas na resposta (única vez).
+- **Desfazer missão (↶):** tudo o que a IA alterou num pedido pode ser revertido (inserções, alterações e exclusões; a exclusão recria as linhas, mas não as filhas apagadas em cascata). O diário fica em memória do servidor (últimas 20 missões; some ao reiniciar).
+- API: `POST /api/admin/ai/exec` e `POST /api/admin/ai/undo` (master); o chat usa `POST /api/ai/chat` com `scope: "db"`.
+
 ## Conteúdo de cada bloco
 
 Selecione um bloco e clique em **📝** na barra dele para abrir o modal de **conteúdo**: título, texto formatado (negrito, itálico, sublinhado, subtítulo, listas) e arquivos (**textos de qualquer extensão, imagens, PDFs e áudios**, vários de uma vez, até 25 MB cada e 20 por bloco). O botão **✦ IA** lê o que você escreveu (mais o caminho do bloco no mapa) e **propõe** um texto, acrescentado ao final do rascunho; **↶ Desfazer IA** volta ao anterior. Ao **Salvar**, abre um segundo modal que mostra tudo organizado: título, conteúdo e arquivos (galeria de imagens, player de áudio, PDFs, prévia de textos). Blocos com conteúdo ganham um selo 📝 que abre essa visualização. Quem só visualiza o projeto (público) vê o conteúdo, mas não edita.

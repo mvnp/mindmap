@@ -518,3 +518,9 @@ button { font: inherit; cursor: pointer; border: 0; background: none; color: inh
 .notif-acts { display: flex; gap: 6px; flex-shrink: 0; }
 .notif-acts .primary { background: #4f7cf7; color: #fff; border-color: #4f7cf7; }
 .notif-err { color: #c0392b; font-size: 13px; }
+
+/* assistente de IA do banco: linhas tocadas pela IA */
+.dbv tr.ai-hit td { background: #efe7ff !important; box-shadow: inset 0 0 0 1px #c9b3ff; animation: ai-hit-pulse 1s ease-out 2; }
+@keyframes ai-hit-pulse { 0% { background: #d4bfff; } 100% { background: #efe7ff; } }
+.dbv .ai-fab, .dbv .ai-pill, .dbv .ai-dock { bottom: 20px; z-index: 30; }
+.dbv .ai-dock { height: min(620px, calc(100vh - 110px)); }
