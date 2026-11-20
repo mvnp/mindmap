@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import DbViewer from './DbViewer';
 import ShareModal from './ShareModal';
+import Notifications from './Notifications';
 import { ContentEditor, ContentViewer } from './ContentModal';
 import AiAssistant from './AiAssistant';
 import { makeExecutor, describeMap } from './ai/executor';
@@ -42,9 +43,8 @@ const HELP = [
 ];
 
 export default function MindMap({ user, current, initialData }) {
-  const reader = !!user.readonly;                 // conta LEITORA: não edita nada, em nenhum projeto (a trava de verdade fica no servidor)
-  const readOnly = current.papel === 'viewer' || reader;   // viewer: público ou membro leitor; sem editar
-  const isOwner = current.papel === 'owner' && !reader;
+  const readOnly = current.papel === 'viewer';   // viewer: público ou membro leitor; sem editar
+  const isOwner = current.papel === 'owner';
   const [projects, setProjects] = useState([]);
   const [pid, setPid] = useState(null);
   const [nodes, setNodes] = useState([]);
@@ -792,7 +792,6 @@ export default function MindMap({ user, current, initialData }) {
     window.location.href = `/p/${p.uuid}`;
   };
   const newProject = async () => {
-    if (reader) return;
     const name = prompt('Nome do projeto:', `Projeto ${projects.filter(p => p.papel === 'owner').length + 1}`); if (!name?.trim()) return;
     const p = await (await fetch('/api/projects', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name }) })).json();
     try { sync(); flush(); await queue.current; } catch {}
@@ -800,8 +799,8 @@ export default function MindMap({ user, current, initialData }) {
   };
   // editar (modal com nome e descrição) e excluir (modal de confirmação): nada de prompt/confirm do navegador
   const [projDlg, setProjDlg] = useState(null);   // { kind: 'edit' | 'delete', p, name, descricao, err, busy }
-  const renameProject = p => { if (p.papel === 'owner' && !reader) setProjDlg({ kind: 'edit', p, name: p.name, descricao: p.descricao || '' }); };
-  const askDelete = p => { if (p.papel === 'owner' && !reader) setProjDlg({ kind: 'delete', p }); };
+  const renameProject = p => { if (p.papel === 'owner') setProjDlg({ kind: 'edit', p, name: p.name, descricao: p.descricao || '' }); };
+  const askDelete = p => { if (p.papel === 'owner') setProjDlg({ kind: 'delete', p }); };
   const saveProject = async () => {
     const d = projDlg; if (!d || d.busy) return;
     if (!d.name.trim()) return setProjDlg({ ...d, err: 'Informe o nome do projeto.' });
@@ -896,16 +895,17 @@ export default function MindMap({ user, current, initialData }) {
             <div className="u-name">{user.nome} {user.sobrenome}{user.master && <em>master</em>}</div>
             <div className="u-mail" title={user.email}>{user.email}</div>
             <div className="u-actions">
+              <Notifications onAccepted={d => goProject({ id: -1, uuid: d.uuid })} />
               {user.master && <button onClick={() => setDbOpen(true)} title="Ver as tabelas e os dados do banco">Banco de dados</button>}
               <button className="u-out" onClick={logout}>Sair</button>
             </div>
           </div>
-          <div className="side-h">Projetos <span className="side-btns"><button className="icon help-btn" title="Atalhos e ajuda" aria-label="Ajuda: atalhos" onClick={() => setHelpOpen(true)}>?</button>{!reader && <button className="icon" title="Novo projeto" onClick={newProject}>＋</button>}</span></div>
+          <div className="side-h">Projetos <span className="side-btns"><button className="icon help-btn" title="Atalhos e ajuda" aria-label="Ajuda: atalhos" onClick={() => setHelpOpen(true)}>?</button>{<button className="icon" title="Novo projeto" onClick={newProject}>＋</button>}</span></div>
           <ul>
             {projects.filter(p => p.papel === 'owner').map(p => (
               <li key={p.id} className={p.id === current.id ? 'on' : ''} onClick={() => goProject(p)} onDoubleClick={() => renameProject(p)} title={p.descricao || undefined}>
                 <span className="pname">{p.name}</span>
-                {!reader && <span className="pacts">
+                {p.papel === 'owner' && <span className="pacts">
                   <button className="icon sm" title="Editar nome e descrição" aria-label="Editar projeto" onClick={e => { e.stopPropagation(); renameProject(p); }}>
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 2.5l2.5 2.5L5.5 13 2 14l1-3.5z" /></svg>
                   </button>
@@ -1082,7 +1082,7 @@ export default function MindMap({ user, current, initialData }) {
           {!readOnly && <button title="Exportar mapa em JSON" onClick={openExport}>Exportar</button>}
           {!readOnly && <button title="Importar mapa de um JSON" onClick={openImport}>Importar</button>}
           {isOwner && <button className="share-btn" title="URL única, visibilidade e convites" onClick={() => setShareOpen(true)}>Compartilhar</button>}
-          {readOnly && <span className="selcount ro" title={reader ? 'Sua conta é somente leitura: você pode visualizar, nunca editar' : 'Você pode visualizar este projeto, não editar'}>Somente leitura</span>}
+          {readOnly && <span className="selcount ro" title={'Você é leitor neste projeto: pode visualizar, não editar'}>Somente leitura</span>}
           {current.papel === 'editor' && <span className="selcount">Colaborador</span>}
           <button title="Tela cheia (F12)" onClick={() => { setFull(true); document.documentElement.requestFullscreen?.().catch(() => {}); }}>⛶</button>
           <span className="status">{status}</span>

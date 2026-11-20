@@ -503,3 +503,16 @@ button { font: inherit; cursor: pointer; border: 0; background: none; color: inh
 .modal.ct-modal:focus { outline: none; }
 
 .sh-role { font: inherit; font-size: 12px; border: 1px solid #ddd; border-radius: 6px; padding: 3px 6px; background: #fff; margin-left: auto; }
+
+/* caixa de notificações (convites) */
+.notif-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; padding: 6px 9px; }
+.notif-badge { position: absolute; top: -6px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: #ff6b6b; color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
+.notif-modal { width: min(560px, 92vw); outline: none; }
+.notif-empty { margin: 4px 0; color: #888; }
+.notif-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow: auto; }
+.notif-list li { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 12px; border: 1px solid #e4e4ea; border-radius: 10px; }
+.notif-txt { display: flex; flex-direction: column; gap: 3px; font-size: 13px; line-height: 1.4; min-width: 0; }
+.notif-txt small { color: #777; font-size: 12px; }
+.notif-acts { display: flex; gap: 6px; flex-shrink: 0; }
+.notif-acts .primary { background: #4f7cf7; color: #fff; border-color: #4f7cf7; }
+.notif-err { color: #c0392b; font-size: 13px; }
