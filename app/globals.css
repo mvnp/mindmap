@@ -501,3 +501,5 @@ button { font: inherit; cursor: pointer; border: 0; background: none; color: inh
 .ct-pre { max-height: 300px; overflow: auto; background: #f7f7f9; border-radius: 8px; padding: 10px 12px; margin: 6px 0 0; font: 12.5px/1.5 Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
 
 .modal.ct-modal:focus { outline: none; }
+
+.sh-role { font: inherit; font-size: 12px; border: 1px solid #ddd; border-radius: 6px; padding: 3px 6px; background: #fff; margin-left: auto; }

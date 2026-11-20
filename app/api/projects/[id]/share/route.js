@@ -1,4 +1,4 @@
-import { ownsProject, shareInfo, setVisibility, removeMember, removeInvite, HttpError } from '@/lib/db';
+import { ownsProject, shareInfo, setVisibility, setMemberRole, removeMember, removeInvite, HttpError } from '@/lib/db';
 import { withAuth } from '@/lib/auth';
 export const dynamic = 'force-dynamic';
 
@@ -11,11 +11,15 @@ export const GET = withAuth(async (_req, { params }, user) => {
   return ownsProject(user.id, id) ? Response.json(shareInfo(id)) : notFound();
 });
 
-// { visibilidade: 'privado' | 'publico' | 'convidados' }
+// { visibilidade: 'privado' | 'publico' | 'convidados' } · { membro: userId, papel: 'leitor' | 'editor' }
 export const PATCH = withAuth(async (req, { params }, user) => {
   const id = Number((await params).id);
   if (!ownsProject(user.id, id)) return notFound();
-  try { setVisibility(id, (await req.json()).visibilidade); return Response.json(shareInfo(id)); } catch (e) { return err(e); }
+  try {
+    const b = await req.json();
+    if (b.membro) setMemberRole(id, Number(b.membro), b.papel); else setVisibility(id, b.visibilidade);
+    return Response.json(shareInfo(id));
+  } catch (e) { return err(e); }
 });
 
 // { membro: userId } remove colaborador · { convite: inviteId } revoga convite pendente

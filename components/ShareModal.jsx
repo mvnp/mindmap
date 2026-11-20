@@ -52,6 +52,10 @@ export default function ShareModal({ projectId, onClose }) {
     }
     load();
   };
+  const setPapel = async (membro, papel) => {
+    const r = await fetch(`/api/projects/${projectId}/share`, { method: 'PATCH', headers: json, body: JSON.stringify({ membro, papel }) });
+    if (r.ok) setInfo(await r.json());
+  };
   const remover = async body => {
     const r = await fetch(`/api/projects/${projectId}/share`, { method: 'DELETE', headers: json, body: JSON.stringify(body) });
     if (r.ok) setInfo(await r.json());
@@ -115,7 +119,10 @@ export default function ShareModal({ projectId, onClose }) {
                 <label className="sh-l">Pessoas</label>
                 <ul className="sh-list">
                   {info.membros.map(m => (
-                    <li key={m.user_id}><span>{m.nome} {m.sobrenome} <small>{m.email} · editor</small></span>
+                    <li key={m.user_id}><span>{m.nome} {m.sobrenome} <small>{m.email}</small></span>
+                      <select className="sh-role" value={m.papel} title="Leitor só visualiza; editor também edita" onChange={e => setPapel(m.user_id, e.target.value)}>
+                        <option value="leitor">Leitor</option><option value="editor">Editor</option>
+                      </select>
                       <button onClick={() => remover({ membro: m.user_id })}>Remover</button></li>
                   ))}
                   {info.convites.map(c => (

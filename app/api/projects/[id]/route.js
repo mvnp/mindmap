@@ -1,4 +1,4 @@
-import { getProject, renameProject, updateProject, deleteProject, saveView, ownsProject, canEditProject } from '@/lib/db';
+import { getProject, renameProject, updateProject, deleteProject, saveView, ownsProject, canEditProject, projectRole } from '@/lib/db';
 import { withAuth } from '@/lib/auth';
 import { removeProjectFiles } from '@/lib/conteudo';
 export const dynamic = 'force-dynamic';
@@ -7,7 +7,7 @@ const notFound = () => Response.json({ error: 'não encontrado' }, { status: 404
 
 export const GET = withAuth(async (_req, { params }, user) => {
   const id = Number((await params).id);
-  return canEditProject(user.id, id) ? Response.json(getProject(id)) : notFound();
+  return projectRole(user.id, id) ? Response.json(getProject(id)) : notFound();   // leitura: qualquer papel com acesso
 });
 
 export const PATCH = withAuth(async (req, { params }, user) => {

@@ -19,7 +19,7 @@ let id;
 if (u) {
   id = u.id;
   setPassword(id, senha);
-  db.prepare('UPDATE users SET nome = ?, sobrenome = ?, master = 1, verificado = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(nome, sobrenome, id);
+  db.prepare('UPDATE users SET nome = ?, sobrenome = ?, master = 1, readonly = 0, verificado = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(nome, sobrenome, id);
   console.log(`Usuário existente atualizado como master: ${email}`);
 } else {
   id = createUser({ nome, sobrenome, email, telefone: null, senha, verificado: true, master: true });
