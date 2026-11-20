@@ -14,13 +14,17 @@ export const GET = withAuth(async (req, { params }, user) => {
   try { if (f) size = fs.statSync(absPath(f.caminho)).size; } catch {}
   if (!f || size == null) return Response.json({ error: 'arquivo não encontrado' }, { status: 404 });
 
-  const dl = new URL(req.url).searchParams.get('dl') === '1';
+  const sp = new URL(req.url).searchParams;
+  const dl = sp.get('dl') === '1';
+  const page = !dl && sp.get('view') === '1' && /\.html?$/i.test(f.nome);   // HTML aberto em nova aba: renderizado, mas sem scripts
   const headers = {
-    'Content-Type': f.mime, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=3600',
+    'Content-Type': page ? 'text/html; charset=utf-8' : f.mime, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=3600',
     'X-Content-Type-Options': 'nosniff', 
     'Content-Disposition': `${dl ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(f.nome)}`,
   };
-  if (f.tipo !== 'pdf') headers['Content-Security-Policy'] = "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'";   // PDF precisa do visualizador do navegador
+  // HTML: origem isolada (sandbox sem allow-scripts) → nenhum script roda e nada acessa a sessão; só estilos e imagens embutidas
+  if (page) headers['Content-Security-Policy'] = "sandbox; default-src 'none'; img-src data: https:; font-src data: https:; style-src 'unsafe-inline' https:";
+  else if (f.tipo !== 'pdf') headers['Content-Security-Policy'] = "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'";   // PDF precisa do visualizador do navegador
   let start = 0, end = size - 1, status = 200;
   const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get('range') || '');
   if (m && (m[1] || m[2])) {
