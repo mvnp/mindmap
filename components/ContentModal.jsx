@@ -6,6 +6,8 @@ import { clean, isEmptyHtml, fmtSize, TIPO_ICON } from '@/lib/rich';
 const MAX_FILE = 25 * 1024 * 1024, MAX_FILES = 20;
 const base = (p, nid) => `/api/projects/${p.id}/conteudo/${encodeURIComponent(nid)}`;
 const fileUrl = (p, nid, f, dl) => `${base(p, nid)}/arquivo/${f.id}${dl ? '?dl=1' : ''}`;
+const isHtml = f => /\.html?$/i.test(f.nome);
+const viewUrl = (p, nid, f) => `${base(p, nid)}/arquivo/${f.id}?view=1`;   // página HTML renderizada (sem scripts)
 const jsonHeaders = { 'Content-Type': 'application/json' };
 const stopKeys = (e, onEsc) => { if (e.key === 'Escape') onEsc(); e.stopPropagation(); };   // atalhos do mapa não disparam enquanto o modal está aberto
 
@@ -213,7 +215,9 @@ export function ContentViewer({ project, node, canEdit, onEdit, onClose }) {
               <a className="ct-btn" href={fileUrl(project, node.id, f)} target="_blank" rel="noopener noreferrer">Abrir</a><a className="ct-btn" href={fileUrl(project, node.id, f, true)}>Baixar</a></div>)}</section>}
           {by('texto').length > 0 && <section><h4>Textos <small>{by('texto').length}</small></h4>
             {by('texto').map(f => <div key={f.id}><div className="ct-row"><span title={f.nome}>📄 {f.nome} <small>{fmtSize(f.tamanho)}</small></span>
-              <button className="ct-btn" onClick={() => setOpen(open === f.id ? null : f.id)}>{open === f.id ? 'Ocultar' : 'Ver'}</button><a className="ct-btn" href={fileUrl(project, node.id, f, true)}>Baixar</a></div>
+              {isHtml(f)
+                ? <a className="ct-btn" href={viewUrl(project, node.id, f)} target="_blank" rel="noopener noreferrer">Ver</a>
+                : <button className="ct-btn" onClick={() => setOpen(open === f.id ? null : f.id)}>{open === f.id ? 'Ocultar' : 'Ver'}</button>}<a className="ct-btn" href={fileUrl(project, node.id, f, true)}>Baixar</a></div>
               {open === f.id && <TextPreview url={fileUrl(project, node.id, f)} />}</div>)}</section>}
         </div>
         <div className="modal-actions ct-foot">
