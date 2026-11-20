@@ -7,7 +7,7 @@ services:
     container_name: mindmap
     restart: unless-stopped
     env_file:
-      - path: .env          # SMTP e APP_URL (veja .env.example); o arquivo não vai para o git
+      - path: .env          # MYSMTP_* e APP_URL (veja .env.example); o arquivo não vai para o git
         required: false
     ports:
       - "${PORT:-3000}:3000"   # mude com: PORT=8080 docker compose up -d
