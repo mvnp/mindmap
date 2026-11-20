@@ -153,7 +153,9 @@ button { font: inherit; cursor: pointer; border: 0; background: none; color: inh
 .u-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .u-actions button { padding: 5px 10px; border-radius: 6px; background: #fff; border: 1px solid #e2e2e2; font-size: 12px; }
 .u-actions button:hover { background: #eef1ff; }
-.u-actions .u-out { margin-left: auto; color: #c04040; }
+.side-foot { padding: 10px 12px 12px; }
+.side-foot .u-out { width: 100%; padding: 9px 12px; border: 0; border-radius: 8px; background: #d6708a; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+.side-foot .u-out:hover { background: #c75d7a; }
 
 /* visualizador do banco (tela cheia) */
 .dbv { position: fixed; inset: 0; z-index: 100; background: #fff; display: flex; flex-direction: column; }
