@@ -897,7 +897,6 @@ export default function MindMap({ user, current, initialData }) {
             <div className="u-actions">
               <Notifications onAccepted={d => goProject({ id: -1, uuid: d.uuid })} />
               {user.master && <button onClick={() => setDbOpen(true)} title="Ver as tabelas e os dados do banco">Banco de dados</button>}
-              <button className="u-out" onClick={logout}>Sair</button>
             </div>
           </div>
           <div className="side-h">Projetos <span className="side-btns"><button className="icon help-btn" title="Atalhos e ajuda" aria-label="Ajuda: atalhos" onClick={() => setHelpOpen(true)}>?</button>{<button className="icon" title="Novo projeto" onClick={newProject}>＋</button>}</span></div>
@@ -922,6 +921,7 @@ export default function MindMap({ user, current, initialData }) {
               </li>
             ))}
           </ul>
+          <div className="side-foot"><button className="u-out" onClick={logout}>Sair</button></div>
         </aside>
         <div className="world" style={{ transform: `translate(${view.x}px,${view.y}px) scale(${view.s})` }}>
           <svg className="edges"><g>
